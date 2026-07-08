@@ -1,4 +1,4 @@
-# Build, test, and publish the SharpNinja.Valhalla NuGet package.
+# Build, test, pack, and publish the SharpNinja.Valhalla NuGet package via the Nuke build.
 # Runs on the self-hosted "Default" agent pool.
 #
 # Required pipeline variable (set as a secret in the pipeline settings):
@@ -12,10 +12,14 @@ trigger:
 pool: Default
 
 variables:
-  buildConfiguration: 'Release'
-  nugetSource: 'https://api.nuget.org/v3/index.json'
+  configuration: 'Release'
 
 steps:
+  # Fresh working tree each run: the persisted self-hosted agent would otherwise keep prior
+  # artifacts/output around (the Nuke Pack/Test targets also self-clean their output dirs).
+  - checkout: self
+    clean: true
+
   - task: UseDotNet@2
     displayName: 'Use .NET 10 SDK'
     inputs:
@@ -23,20 +27,14 @@ steps:
       version: '10.0.x'
       includePreviewVersions: true
 
-  - script: dotnet workload restore SharpNinja.Valhalla.slnx
-    displayName: 'Restore workloads (net10.0-android)'
-
-  - script: dotnet restore SharpNinja.Valhalla.slnx
-    displayName: 'Restore'
-
-  - script: dotnet build SharpNinja.Valhalla.slnx --configuration $(buildConfiguration) --no-restore
-    displayName: 'Build'
-
-  - script: >-
-      dotnet test tests/SharpNinja.Valhalla.Tests/SharpNinja.Valhalla.Tests.csproj
-      --configuration $(buildConfiguration) --no-build
-      --logger trx --results-directory $(Agent.TempDirectory)/testresults
-    displayName: 'Test'
+  # The Nuke Publish target chains Restore -> Compile -> Test -> Pack -> Publish. Pack cleans
+  # artifacts/nuget and Publish pushes only the freshly-produced package. The NuGet API key is
+  # passed through the environment (read by the Publish target as NUGET_API_KEY); Publish fails
+  # fast if it is unset.
+  - pwsh: ./build.ps1 Publish --configuration $(configuration)
+    displayName: 'Nuke: Restore, Compile, Test, Pack, Publish'
+    env:
+      NUGET_API_KEY: $(NUGET_API_KEY)
 
   - task: PublishTestResults@2
     displayName: 'Publish test results'
@@ -44,20 +42,9 @@ steps:
     inputs:
       testResultsFormat: 'VSTest'
       testResultsFiles: '**/*.trx'
-      searchFolder: '$(Agent.TempDirectory)/testresults'
+      searchFolder: '$(Build.SourcesDirectory)/artifacts/test-results'
 
-  - script: >-
-      dotnet pack src/SharpNinja.Valhalla/SharpNinja.Valhalla.csproj
-      --configuration $(buildConfiguration) --no-build
-      --output $(Build.ArtifactStagingDirectory)/nuget
-    displayName: 'Pack SharpNinja.Valhalla'
-
-  - publish: '$(Build.ArtifactStagingDirectory)/nuget'
+  - publish: '$(Build.SourcesDirectory)/artifacts/nuget'
     artifact: nuget
-    displayName: 'Publish pipeline artifact'
-
-  - script: >-
-      dotnet nuget push "$(Build.ArtifactStagingDirectory)/nuget/*.nupkg"
-      --api-key $(NUGET_API_KEY) --source $(nugetSource) --skip-duplicate
-    displayName: 'Push SharpNinja.Valhalla to NuGet.org'
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    displayName: 'Publish pipeline artifact (nupkg)'
+    condition: succeeded()

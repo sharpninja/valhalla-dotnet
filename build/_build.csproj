@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Nuke build host. Run `build.ps1 <Target>` (which does `dotnet run` against this project) to boot
+    a console host that calls Execute(x => x.Pack). Nuke.Common is pinned in Directory.Packages.props.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <NukeRootDirectory>..</NukeRootDirectory>
+    <NukeScriptDirectory>..</NukeScriptDirectory>
+    <NoWarn>$(NoWarn);CS0649;CS0169</NoWarn>
+    <NukeTelemetryVersion>1</NukeTelemetryVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nuke.Common" />
+  </ItemGroup>
+
+</Project>

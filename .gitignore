@@ -15,6 +15,10 @@ artifacts/nuget/
 # Local MCP workspace db (runtime)
 mcp.db
 
+# Nuke build temp logs + test output
+.nuke/temp/
+artifacts/test-results/
+
 # NuGet
 *.nupkg
 *.snupkg
