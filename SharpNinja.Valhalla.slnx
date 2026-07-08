@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SharpNinja.Valhalla/SharpNinja.Valhalla.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SharpNinja.Valhalla.Tests/SharpNinja.Valhalla.Tests.csproj" />
+  </Folder>
+</Solution>

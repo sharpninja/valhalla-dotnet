@@ -1,0 +1,63 @@
+# Build, test, and publish the SharpNinja.Valhalla NuGet package.
+# Runs on the self-hosted "Default" agent pool.
+#
+# Required pipeline variable (set as a secret in the pipeline settings):
+#   NUGET_API_KEY - API key with push rights for the SharpNinja.Valhalla package on nuget.org.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool: Default
+
+variables:
+  buildConfiguration: 'Release'
+  nugetSource: 'https://api.nuget.org/v3/index.json'
+
+steps:
+  - task: UseDotNet@2
+    displayName: 'Use .NET 10 SDK'
+    inputs:
+      packageType: sdk
+      version: '10.0.x'
+      includePreviewVersions: true
+
+  - script: dotnet workload restore SharpNinja.Valhalla.slnx
+    displayName: 'Restore workloads (net10.0-android)'
+
+  - script: dotnet restore SharpNinja.Valhalla.slnx
+    displayName: 'Restore'
+
+  - script: dotnet build SharpNinja.Valhalla.slnx --configuration $(buildConfiguration) --no-restore
+    displayName: 'Build'
+
+  - script: >-
+      dotnet test tests/SharpNinja.Valhalla.Tests/SharpNinja.Valhalla.Tests.csproj
+      --configuration $(buildConfiguration) --no-build
+      --logger trx --results-directory $(Agent.TempDirectory)/testresults
+    displayName: 'Test'
+
+  - task: PublishTestResults@2
+    displayName: 'Publish test results'
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: 'VSTest'
+      testResultsFiles: '**/*.trx'
+      searchFolder: '$(Agent.TempDirectory)/testresults'
+
+  - script: >-
+      dotnet pack src/SharpNinja.Valhalla/SharpNinja.Valhalla.csproj
+      --configuration $(buildConfiguration) --no-build
+      --output $(Build.ArtifactStagingDirectory)/nuget
+    displayName: 'Pack SharpNinja.Valhalla'
+
+  - publish: '$(Build.ArtifactStagingDirectory)/nuget'
+    artifact: nuget
+    displayName: 'Publish pipeline artifact'
+
+  - script: >-
+      dotnet nuget push "$(Build.ArtifactStagingDirectory)/nuget/*.nupkg"
+      --api-key $(NUGET_API_KEY) --source $(nugetSource) --skip-duplicate
+    displayName: 'Push SharpNinja.Valhalla to NuGet.org'
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
