@@ -13,6 +13,7 @@
     <Authors>SharpNinja</Authors>
     <Description>Embedded, in-process C# port of the Valhalla OSM routing engine (Baldr graph reader, Sif costing, Thor route engine, Odin directions, Mjolnir tile builder) with a provider-neutral routing client. Consumes local Valhalla tiles; no external routing server.</Description>
     <PackageTags>valhalla;osm;routing;navigation;maps;offline</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/sharpninja/valhalla-dotnet</RepositoryUrl>
     <PackageProjectUrl>https://github.com/sharpninja/valhalla-dotnet</PackageProjectUrl>
   </PropertyGroup>
