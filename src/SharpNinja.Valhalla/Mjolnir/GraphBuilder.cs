@@ -515,7 +515,7 @@ public sealed class GraphBuilder
             OSMWay way = ways[wayIndex];
             if (way.Ferry() && way.Duration != 0)
             {
-                PointLL prev = default;
+                PointLL? prev = null;
                 while (wayNodeIndex < wayNodes.Count)
                 {
                     OSMWayNode wayNode = wayNodes[wayNodeIndex];
@@ -543,7 +543,10 @@ public sealed class GraphBuilder
                     }
 
                     PointLL curr = wayNode.Node.LatLng();
-                    length += prev.Distance(curr);
+                    // prev is set below once the first matching wayNode.WayIndex is found; every way
+                    // has at least 2 nodes (ferries are rare but never degenerate), so it is non-null
+                    // by the time this second loop runs.
+                    length += prev!.Distance(curr);
                     prev = curr;
                     wayNodeIndex += 1;
                 }

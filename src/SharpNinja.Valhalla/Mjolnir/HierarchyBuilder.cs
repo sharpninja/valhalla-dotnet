@@ -354,7 +354,7 @@ public static class HierarchyBuilder
         reader.Clear();
         byte currentLevel = byte.MaxValue;
         GraphId tileId = default;
-        PointLL baseLl = default;
+        PointLL? baseLl = null;
         GraphTileBuilder? tilebuilder = null;
         foreach ((GraphId nodea, GraphId baseNode) in newToOld)
         {
@@ -396,7 +396,10 @@ public static class HierarchyBuilder
             NodeInfo baseni = tile.Node((int)baseNode.Id());
             AdminInfo admin = tile.AdminInfo((int)baseni.AdminIndex);
             NodeInfo node = baseni;
-            node.SetLatLng(baseLl, baseni.LatLng(tile.Header().BaseLl()));
+            // baseLl is set on the first loop iteration (tileId starts at default, so
+            // nodea.TileBase() != tileId is always true the first time through) and on every tile
+            // change thereafter, so it is always non-null by the time it's read here.
+            node.SetLatLng(baseLl!, baseni.LatLng(tile.Header().BaseLl()));
             node.SetEdgeIndex((uint)tilebuilder.DirectedEdges.Count);
             node.SetTimezone(baseni.Timezone());
             node.SetAdminIndex((ushort)tilebuilder.AddAdmin(

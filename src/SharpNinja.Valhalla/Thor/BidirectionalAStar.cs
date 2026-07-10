@@ -530,9 +530,9 @@ public sealed class BidirectionalAStar : PathAlgorithm
                 sortcost, dist, _mode, transitionCost, notThruPruning,
                 pred.ClosurePruning() || !IsClosed(oppEdge!.Value, t2, oppEdgeId),
                 (flowSources & GraphConstants.DefaultFlowMask) != 0,
-                _costing.TurnType(meta.Edge.LocalEdgeIdx, nodeinfo, oppEdge.Value, oppPredEdge),
+                _costing.TurnType(meta.Edge.LocalEdgeIdx, nodeinfo, oppEdge!.Value, oppPredEdge),
                 restrictionIdx, 0,
-                oppEdge.Value.DestOnly || (_costing.IsHgv() && oppEdge.Value.DestOnlyHgv),
+                oppEdge!.Value.DestOnly || (_costing.IsHgv() && oppEdge.Value.DestOnlyHgv),
                 (oppEdge.Value.ForwardAccess & GraphConstants.TruckAccess) != 0,
                 destonlyRestrictionMask));
             _adjacencylistReverse.Add(idx);
@@ -1295,8 +1295,10 @@ public sealed class BidirectionalAStar : PathAlgorithm
             float sortcost = cost.CostValue + _astarheuristicReverse.Get(dist);
 
             // Add EdgeLabel to the adjacency list. Set the predecessor edge index to invalid.
+            // oppTile is guaranteed non-null here: GetOpposingEdgeId only returns a valid id (checked
+            // via oppDirEdge above) after successfully resolving oppTile.
             uint idx = (uint)_edgelabelsReverse.Count;
-            _edgestatusReverse.Set(oppEdgeId, EdgeSet.Temporary, idx, oppTile);
+            _edgestatusReverse.Set(oppEdgeId, EdgeSet.Temporary, idx, oppTile!);
             if (_hierarchyLimitsReverse[(int)oppEdgeId.Level()].MaxUpTransitions != HierarchyLimitsFunctions.UnlimitedTransitions)
             {
                 dist = _astarheuristicForward.GetDistance(endNodeLl);

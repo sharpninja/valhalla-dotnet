@@ -36,7 +36,7 @@ public class ComplexRestrictionTests
 
     [Fact]
     public void SizeofStructConstantMatchesType()
-        => Assert.Equal(Unsafe.SizeOf<ComplexRestriction>(), ComplexRestriction.SizeOfStruct);
+        => Assert.Equal(ComplexRestriction.SizeOfStruct, Unsafe.SizeOf<ComplexRestriction>());
 
     [Fact]
     public void DefaultFromIdIsInvalid()

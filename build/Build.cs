@@ -22,10 +22,10 @@ class Build : NukeBuild
     readonly string NugetSource = "https://api.nuget.org/v3/index.json";
 
     [Parameter("NuGet API key for publishing; defaults to the NUGET_API_KEY environment variable."), Secret]
-    readonly string NugetApiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY");
+    readonly string? NugetApiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY");
 
     [Parameter("Optional package version override (e.g. from CI); falls back to the csproj <Version>.")]
-    readonly string PackageVersion;
+    readonly string? PackageVersion;
 
     AbsolutePath SourceDirectory => RootDirectory / "src";
     AbsolutePath TestsDirectory => RootDirectory / "tests";
@@ -129,9 +129,10 @@ class Build : NukeBuild
         {
             // Fail fast on an unset/misnamed CI secret: Azure DevOps leaves an undefined $(VAR)
             // macro as its literal text, which slips past Requires (non-empty) and would otherwise
-            // only fail at push with a confusing 403.
+            // only fail at push with a confusing 403. The null-forgiving operators below are safe:
+            // .Requires(() => NugetApiKey) above guarantees non-null/non-empty before Executes runs.
             Assert.False(
-                NugetApiKey.StartsWith("$(", StringComparison.Ordinal),
+                NugetApiKey!.StartsWith("$(", StringComparison.Ordinal),
                 "NUGET_API_KEY is not set (received an unexpanded pipeline variable). Configure the NUGET_API_KEY secret.");
 
             var packages = ArtifactsDirectory.GlobFiles("*.nupkg");
@@ -141,7 +142,7 @@ class Build : NukeBuild
                 DotNetNuGetPush(s => s
                     .SetTargetPath(package)
                     .SetSource(NugetSource)
-                    .SetApiKey(NugetApiKey)
+                    .SetApiKey(NugetApiKey!)
                     .EnableSkipDuplicate());
             }
         });

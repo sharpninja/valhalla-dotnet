@@ -136,7 +136,7 @@ public sealed class EmbeddedValhallaRoutingClientInstructionTests
             Destination: destination,
             Costing: OsmRouteCostings.Auto);
 
-        OsmRouteResult result = await client.CalculateRouteAsync(request);
+        OsmRouteResult result = await client.CalculateRouteAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
         Assert.NotEmpty(result.Routes);

@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <PackageReference Include="Nuke.Common" />
+    <!-- Override Nuke.Common's transitive NuGet.Packaging / System.Security.Cryptography.Xml with
+         the pinned, advisory-clean versions from Directory.Packages.props. -->
+    <PackageReference Include="NuGet.Packaging" />
+    <PackageReference Include="System.Security.Cryptography.Xml" />
   </ItemGroup>
 
 </Project>

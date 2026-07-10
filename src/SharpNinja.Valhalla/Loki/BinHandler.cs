@@ -486,9 +486,10 @@ internal sealed class BinHandler
                     continue;
                 }
 
-                // swap in the opposing edge
+                // swap in the opposing edge. oppTile is guaranteed non-null here: GetOpposingEdgeId
+                // only returns a valid id after successfully resolving oppTile via GetGraphTile.
                 edge = oppEdge.Value;
-                tile = oppTile;
+                tile = oppTile!;
                 edgeId = oppEdgeid;
             }
 
@@ -764,11 +765,11 @@ internal sealed class BinHandler
             SortPps();
         }
 
-        Finalize();
+        FinalizeBins();
     }
 
     // Faithful port of finalize.
-    private void Finalize()
+    private void FinalizeBins()
     {
         foreach (ProjectorWrapper pp in _pps)
         {

@@ -1191,9 +1191,14 @@ public class NarrativeBuilder
         }
         else
         {
+            // Unreachable while optionRoundaboutExits is hard-coded to true above (matching upstream's
+            // current hard-coded option_roundabout_exits). Kept, not deleted, so the option_roundabout_exits
+            // = false behavior is preserved verbatim for when that option is threaded through for real.
+#pragma warning disable CS0162 // Unreachable code detected
             roundaboutExitStreetNames = FormStreetNames(maneuver, maneuver.RoundaboutExitStreetNames(),
                 subset.EmptyStreetNameLabels, true);
             roundaboutExitBeginStreetNames = FormStreetNames(maneuver, maneuver.RoundaboutExitBeginStreetNames());
+#pragma warning restore CS0162
         }
 
         int phraseId = 0;

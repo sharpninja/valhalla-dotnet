@@ -383,9 +383,9 @@ public class GraphTileTests
             BinaryPrimitives.WriteUInt64LittleEndian(w.Slice(16, 8), word2);
             _data.AddRange(w.ToArray());
 
+            Span<byte> v = stackalloc byte[8];
             foreach (GraphId via in vias)
             {
-                Span<byte> v = stackalloc byte[8];
                 BinaryPrimitives.WriteUInt64LittleEndian(v, via.Value);
                 _data.AddRange(v.ToArray());
             }

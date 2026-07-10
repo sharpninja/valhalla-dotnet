@@ -122,7 +122,7 @@ public sealed class EmbeddedValhallaRoutingClientAlternatesTests
 
                 var req = new OsmRouteRequest(null, pts[i], pts[j], OsmRouteCostings.Auto,
                     ComputeAlternativeRoutes: true);
-                OsmRouteResult res = await client.CalculateRouteAsync(req);
+                OsmRouteResult res = await client.CalculateRouteAsync(req, TestContext.Current.CancellationToken);
                 if (res.Error is null && res.Routes.Count > 1)
                 {
                     multi = res;
@@ -168,7 +168,7 @@ public sealed class EmbeddedValhallaRoutingClientAlternatesTests
 
                 var enabled = new OsmRouteRequest(null, pts[i], pts[j], OsmRouteCostings.Auto,
                     ComputeAlternativeRoutes: true);
-                OsmRouteResult withAlts = await client.CalculateRouteAsync(enabled);
+                OsmRouteResult withAlts = await client.CalculateRouteAsync(enabled, TestContext.Current.CancellationToken);
                 if (withAlts.Error is not null || withAlts.Routes.Count <= 1)
                 {
                     continue;
@@ -176,7 +176,7 @@ public sealed class EmbeddedValhallaRoutingClientAlternatesTests
 
                 var disabled = new OsmRouteRequest(null, pts[i], pts[j], OsmRouteCostings.Auto,
                     ComputeAlternativeRoutes: false);
-                OsmRouteResult single = await client.CalculateRouteAsync(disabled);
+                OsmRouteResult single = await client.CalculateRouteAsync(disabled, TestContext.Current.CancellationToken);
 
                 Assert.Null(single.Error);
                 Assert.Single(single.Routes);
