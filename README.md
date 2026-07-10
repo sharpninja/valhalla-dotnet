@@ -23,11 +23,11 @@ Each module is a fairly direct port of the corresponding Valhalla C++ module, wi
 | `Baldr` | `valhalla/baldr` | Graph tile reader: tiles, directed edges, nodes, admin areas, traffic, restrictions, sign/street name info | `src/SharpNinja.Valhalla/Baldr/` (39 files) | 32 files |
 | `Midgard` | `valhalla/midgard` | Geometry primitives: points, polylines, tiling math, distance approximation, encoded-shape helpers | `src/SharpNinja.Valhalla/Midgard/` (18 files) | 10 files |
 | `Loki` | `valhalla/loki` | Location correlation: snapping input coordinates onto the graph, closest-edge search | `src/SharpNinja.Valhalla/Loki/` (4 files) | 3 files |
-| `Sif` | `valhalla/sif` | Costing models: `DynamicCost`, `AutoCost`, `TruckCost`, edge labels | `src/SharpNinja.Valhalla/Sif/` (8 files) | 3 files |
-| `Thor` | `valhalla/thor` | Path algorithms: unidirectional and bidirectional A*, trip-leg building | `src/SharpNinja.Valhalla/Thor/` (10 files) | 8 files |
+| `Sif` | `valhalla/sif` | Costing models: `DynamicCost`, `AutoCost`, `TruckCost`, edge labels | `src/SharpNinja.Valhalla/Sif/` (8 files) | 4 files |
+| `Thor` | `valhalla/thor` | Path algorithms: unidirectional and bidirectional A* (including alternate-route recost/viability filters), trip-leg building | `src/SharpNinja.Valhalla/Thor/` (10 files) | 10 files |
 | `Odin` | `valhalla/odin` | Maneuver building, directions-leg assembly, and en-US narrative prose (`NarrativeBuilder` + embedded locale dictionaries; see [Known gaps](#known-gaps) for remaining parity depth) | `src/SharpNinja.Valhalla/Odin/` | tests under `Odin/` |
 | `Mjolnir` | `valhalla/mjolnir` | Tile builder: OSM PBF parsing, graph construction, enhancement, shortcuts, restrictions | `src/SharpNinja.Valhalla/Mjolnir/` (33 files) | 14 files |
-| `Osm` | - | This package's own on-device provisioning seam (tile-set building, extract retrieval abstractions) | `src/SharpNinja.Valhalla/Osm/` (4 files) | - |
+| `Osm` | - | This package's own on-device provisioning seam (tile-set building, extract retrieval abstractions) | `src/SharpNinja.Valhalla/Osm/` (4 files) | 2 files |
 
 On top of these, the package root exposes the public, provider-neutral surface: `IOsmRoutingClient`, `EmbeddedValhallaRoutingClient`, `EmbeddedValhallaGraphReaderFactory`, `GeoCoordinate`, `IEncodedPolylineDecoder`, `ValhallaPolylineDecoder`, and `OsmRoutingErrorCodes`.
 
@@ -90,7 +90,7 @@ Notes on the shapes above:
 - `EmbeddedValhallaGraphReaderFactory` caches one `GraphReader` per tile directory (tile loading is expensive) and hands out a `Lease` with a lock gate, because the ported tile cache is not thread-safe. `EmbeddedValhallaRoutingClient` already serializes on that gate internally, so callers just await `CalculateRouteAsync` as normal.
 - `IOsmTileDirectoryProvider` is host-supplied on purpose: the package does not care whether the tile directory comes from settings, is downloaded on demand, or is bundled with the app.
 - Truck routing is available via `OsmRouteCostings.Truck` and `OsmRouteRequest.TruckOptions` (height/width/length/weight/axle count); omitting `TruckOptions` falls back to stock Valhalla's default truck profile.
-- `OsmRouteRequest.ComputeAlternativeRoutes` is currently a no-op (see [Known gaps](#known-gaps)).
+- Set `OsmRouteRequest.ComputeAlternativeRoutes` (with no `Via` points) to get up to 2 distinct routes back in `OsmRouteResult.Routes`, primary first then by ascending cost; see [Known gaps](#known-gaps) for the viability caveat on small maps.
 
 ### Decoding an encoded shape
 
@@ -169,7 +169,7 @@ Common targets:
 
 ## Testing
 
-The test suite is xUnit and mirrors the `src/` module layout 1:1 (76 test files across `Baldr`, `Loki`, `Midgard`, `Mjolnir`, `Odin`, `Sif`, and `Thor`), plus a `BaldrMonacoParityTests` suite that checks the ported `Baldr` reader against reference behavior.
+The test suite is xUnit and mirrors the `src/` module layout 1:1 (89 test files across `Baldr`, `Loki`, `Midgard`, `Mjolnir`, `Odin`, `Osm`, `Sif`, and `Thor`), plus a `BaldrMonacoParityTests` suite that checks the ported `Baldr` reader against reference behavior.
 
 ```powershell
 dotnet test tests/SharpNinja.Valhalla.Tests/SharpNinja.Valhalla.Tests.csproj

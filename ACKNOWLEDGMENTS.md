@@ -10,6 +10,8 @@
 
 The `Baldr`, `Midgard`, `Loki`, `Sif`, `Thor`, `Odin`, and `Mjolnir` modules in `src/SharpNinja.Valhalla/` are direct ports of the corresponding modules in the upstream Valhalla C++ codebase, adapted to idiomatic C#. Behavior, naming, and module boundaries follow the original engine; see the [README](README.md#modules) for the module-to-module mapping.
 
+The 34 locale dictionaries embedded under `src/SharpNinja.Valhalla/Odin/Locales/*.json` (consumed by the ported `NarrativeBuilder` for maneuver narrative prose) are verbatim copies of upstream Valhalla's `locales/*.json`, covered by the same Valhalla MIT license above.
+
 ## OpenStreetMap test fixture data
 
 The `Baldr`/`Mjolnir` parity tests build and read a real tile set from a small OpenStreetMap extract:
