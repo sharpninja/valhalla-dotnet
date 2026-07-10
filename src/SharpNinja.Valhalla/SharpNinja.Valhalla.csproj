@@ -22,6 +22,15 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
+  <!-- Odin narrative locale dictionaries (verbatim copies of upstream valhalla locales/*.json),
+       embedded so NarrativeDictionaryLoader can load them by BCP-47 tag at runtime. LogicalName is
+       deterministic: SharpNinja.Valhalla.Odin.Locales.<tag>.json -->
+  <ItemGroup>
+    <EmbeddedResource Include="Odin\Locales\*.json">
+      <LogicalName>SharpNinja.Valhalla.Odin.Locales.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <!-- The ported engine's internal test helpers/constants are exercised by the engine's own test
        suite in this repo. -->
   <ItemGroup>

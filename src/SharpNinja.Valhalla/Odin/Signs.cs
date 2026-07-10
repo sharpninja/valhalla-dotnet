@@ -5,12 +5,11 @@
 // Public members are PascalCase. Sorting, counting, trimming, and string-building algorithms mirror
 // the C++ exactly (including the guide branch/toward round/truncate split).
 //
-// PORT-NOTE (DEFER): The optional VerbalTextFormatter / MarkupFormatter parameters on the
-// Get*String / ListToString methods belong to the narrativebuilder prose family, which is DEFERRED
-// for this structural port. The C++ uses them to phonetically format sign text; here the methods
-// always use the raw sign text (the verbal_formatter == nullptr branch), which is the structural
-// path. The pronunciation field on Sign is carried (it is structural data) but is not used to format
-// text here.
+// PORT-NOTE: The optional VerbalTextFormatter / MarkupFormatter parameters on the Get*String /
+// ListToString methods are ported (A2). The verbal narrative path passes a formatter so sign text is
+// expanded for text-to-speech; the WRITTEN path passes none (verbal_formatter == nullptr branch) and
+// uses the raw sign text. The pronunciation field on Sign is carried (structural data) and is only
+// consulted when the MarkupFormatter has phoneme markup enabled (disabled by default).
 
 using System;
 using System.Collections.Generic;
@@ -235,8 +234,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableExitNumberList() => _exitNumberList;
 
     /// <summary>Returns the exit number string. Faithful port of <c>GetExitNumberString()</c>.</summary>
-    public string GetExitNumberString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_exitNumberList, maxCount, limitByConsecutiveCount, delim);
+    public string GetExitNumberString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_exitNumberList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>Exit branch sign list. Faithful port of <c>exit_branch_list()</c>.</summary>
     public IReadOnlyList<OdinSign> ExitBranchList() => _exitBranchList;
@@ -245,8 +245,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableExitBranchList() => _exitBranchList;
 
     /// <summary>Returns the exit branch string. Faithful port of <c>GetExitBranchString()</c>.</summary>
-    public string GetExitBranchString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_exitBranchList, maxCount, limitByConsecutiveCount, delim);
+    public string GetExitBranchString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_exitBranchList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>Exit toward sign list. Faithful port of <c>exit_toward_list()</c>.</summary>
     public IReadOnlyList<OdinSign> ExitTowardList() => _exitTowardList;
@@ -255,8 +256,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableExitTowardList() => _exitTowardList;
 
     /// <summary>Returns the exit toward string. Faithful port of <c>GetExitTowardString()</c>.</summary>
-    public string GetExitTowardString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_exitTowardList, maxCount, limitByConsecutiveCount, delim);
+    public string GetExitTowardString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_exitTowardList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>Exit name sign list. Faithful port of <c>exit_name_list()</c>.</summary>
     public IReadOnlyList<OdinSign> ExitNameList() => _exitNameList;
@@ -265,8 +267,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableExitNameList() => _exitNameList;
 
     /// <summary>Returns the exit name string. Faithful port of <c>GetExitNameString()</c>.</summary>
-    public string GetExitNameString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_exitNameList, maxCount, limitByConsecutiveCount, delim);
+    public string GetExitNameString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_exitNameList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>Guide branch sign list. Faithful port of <c>guide_branch_list()</c>.</summary>
     public IReadOnlyList<OdinSign> GuideBranchList() => _guideBranchList;
@@ -275,8 +278,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableGuideBranchList() => _guideBranchList;
 
     /// <summary>Returns the guide branch string. Faithful port of <c>GetGuideBranchString()</c>.</summary>
-    public string GetGuideBranchString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_guideBranchList, maxCount, limitByConsecutiveCount, delim);
+    public string GetGuideBranchString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_guideBranchList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>Guide toward sign list. Faithful port of <c>guide_toward_list()</c>.</summary>
     public IReadOnlyList<OdinSign> GuideTowardList() => _guideTowardList;
@@ -285,14 +289,16 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableGuideTowardList() => _guideTowardList;
 
     /// <summary>Returns the guide toward string. Faithful port of <c>GetGuideTowardString()</c>.</summary>
-    public string GetGuideTowardString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_guideTowardList, maxCount, limitByConsecutiveCount, delim);
+    public string GetGuideTowardString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_guideTowardList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>
     /// Returns the merged guide string (branch then toward, split by round/truncate when both
     /// exist). Faithful port of <c>GetGuideString()</c>.
     /// </summary>
-    public string GetGuideString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
+    public string GetGuideString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
     {
         string guideString = string.Empty;
 
@@ -305,22 +311,26 @@ public sealed class Signs : IEquatable<Signs>
             string guideBranch = GetGuideBranchString(
                 (uint)Math.Round((float)maxCount / NumberOfGuideSignTypes, MidpointRounding.AwayFromZero),
                 limitByConsecutiveCount,
-                delim);
+                delim,
+                verbalFormatter,
+                markupFormatter);
 
             // Truncate using integer division
             string guideToward = GetGuideTowardString(
                 maxCount / NumberOfGuideSignTypes,
                 limitByConsecutiveCount,
-                delim);
+                delim,
+                verbalFormatter,
+                markupFormatter);
             guideString = guideBranch + delim + guideToward;
         }
         else if (HasGuideBranch())
         {
-            guideString = GetGuideBranchString(maxCount, limitByConsecutiveCount, delim);
+            guideString = GetGuideBranchString(maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
         }
         else if (HasGuideToward())
         {
-            guideString = GetGuideTowardString(maxCount, limitByConsecutiveCount, delim);
+            guideString = GetGuideTowardString(maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
         }
 
         return guideString;
@@ -375,8 +385,9 @@ public sealed class Signs : IEquatable<Signs>
     public List<OdinSign> MutableJunctionNameList() => _junctionNameList;
 
     /// <summary>Returns the junction name string. Faithful port of <c>GetJunctionNameString()</c>.</summary>
-    public string GetJunctionNameString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/")
-        => ListToString(_junctionNameList, maxCount, limitByConsecutiveCount, delim);
+    public string GetJunctionNameString(uint maxCount = 0, bool limitByConsecutiveCount = false, string delim = "/",
+        VerbalTextFormatter? verbalFormatter = null, MarkupFormatter? markupFormatter = null)
+        => ListToString(_junctionNameList, maxCount, limitByConsecutiveCount, delim, verbalFormatter, markupFormatter);
 
     /// <summary>True if any exit sign exists. Faithful port of <c>HasExit()</c>.</summary>
     public bool HasExit() => HasExitNumber() || HasExitBranch() || HasExitToward() || HasExitName();
@@ -444,13 +455,16 @@ public sealed class Signs : IEquatable<Signs>
     /// <inheritdoc/>
     public override int GetHashCode() => _exitNumberList.Count ^ _exitBranchList.Count;
 
-    // Faithful port of ListToString(). The verbal_formatter / markup_formatter path is DEFERRED
-    // (prose), so the raw sign.Text() branch is always used.
+    // Faithful port of ListToString(). When a verbal formatter is supplied (the verbal narrative
+    // path) each sign is run through it (optionally applying markup); otherwise the raw sign.Text()
+    // is used (the written path).
     private static string ListToString(
         IReadOnlyList<OdinSign> signs,
         uint maxCount,
         bool limitByConsecutiveCount,
-        string delim)
+        string delim,
+        VerbalTextFormatter? verbalFormatter = null,
+        MarkupFormatter? markupFormatter = null)
     {
         var signString = new StringBuilder();
         uint count = 0;
@@ -489,8 +503,8 @@ public sealed class Signs : IEquatable<Signs>
                 signString.Append(delim);
             }
 
-            // Concatenate exit text and update count
-            signString.Append(sign.Text());
+            // Concatenate exit text (verbally formatted if a formatter is supplied) and update count
+            signString.Append(verbalFormatter != null ? verbalFormatter.Format(sign, markupFormatter) : sign.Text());
             ++count;
         }
 

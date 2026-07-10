@@ -103,6 +103,33 @@ public sealed class RouteEngine
         Location origin,
         Location destination,
         IReadOnlyList<Location>? vias = null)
+        => RouteAlternates(reader, costing, origin, destination, vias, options: null)[0];
+
+    /// <summary>
+    /// Computes one or more routes from <paramref name="origin"/> to <paramref name="destination"/>
+    /// through the optional ordered <paramref name="vias"/>, returning one <see cref="TripLeg"/> per
+    /// route (the primary route at index 0, alternates following by ascending cost). Alternates are only
+    /// produced for a single origin/destination pair (no vias) when <paramref name="options"/> requests
+    /// them (<c>HasAlternates</c> and <c>Alternates &gt; 0</c>); with vias present, or when alternates
+    /// are not requested, exactly one stitched route is returned (the leg axis is kept separate from the
+    /// route axis - see the file header two-axis note). Faithful in-process analogue of
+    /// <c>path_depart_at</c> producing <c>trip.routes()</c>.
+    /// </summary>
+    /// <param name="reader">The graph reader (must be the one the engine was constructed with).</param>
+    /// <param name="costing">The Sif costing model (DynamicCost) to route with.</param>
+    /// <param name="origin">The start location.</param>
+    /// <param name="destination">The end location.</param>
+    /// <param name="vias">Optional ordered intermediate (through/via) locations.</param>
+    /// <param name="options">Optional request options carrying the alternates request.</param>
+    /// <returns>One <see cref="TripLeg"/> per route; index 0 is the primary route.</returns>
+    /// <exception cref="InvalidOperationException">No route could be found (mirrors valhalla exception 442).</exception>
+    public IReadOnlyList<TripLeg> RouteAlternates(
+        GraphReader reader,
+        DynamicCost costing,
+        Location origin,
+        Location destination,
+        IReadOnlyList<Location>? vias = null,
+        Options? options = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(costing);
@@ -125,26 +152,38 @@ public sealed class RouteEngine
         TravelMode mode = costing.TravelMode();
         var modeCosting = new ModeCosting { [(int)mode] = costing };
 
-        // path_depart_at: for each consecutive (origin, destination) pair build the leg, stitching
-        // through points. Returns the merged path for the whole route.
-        List<PathInfo> path = DepartAt(correlated, costing, modeCosting, mode, out List<string> algorithms);
+        // path_depart_at: build the route(s). The outer list is the route axis (alternates); each inner
+        // path is one whole route (with any via/through legs already stitched).
+        List<List<PathInfo>> routes = DepartAt(correlated, costing, modeCosting, mode, options, out List<string> algorithms);
 
-        if (path.Count == 0)
+        if (routes.Count == 0 || routes[0].Count == 0)
         {
             // no route found (valhalla_exception_t{442}).
             throw new InvalidOperationException("No route found between the supplied locations.");
         }
 
         // Form output information based on path edges. The first and last correlated locations are the
-        // route's break points (origin / destination of the single emitted leg).
-        return TripLegBuilder.Build(
-            reader,
-            modeCosting,
-            path,
-            correlated[0],
-            correlated[^1],
-            algorithms,
-            _interrupt);
+        // route's break points (origin / destination of each emitted route). Ordering follows the engine
+        // order: primary first, alternates by ascending cost (from the stretch-sorted connections).
+        var legs = new List<TripLeg>(routes.Count);
+        foreach (List<PathInfo> route in routes)
+        {
+            if (route.Count == 0)
+            {
+                continue;
+            }
+
+            legs.Add(TripLegBuilder.Build(
+                reader,
+                modeCosting,
+                route,
+                correlated[0],
+                correlated[^1],
+                algorithms,
+                _interrupt));
+        }
+
+        return legs;
     }
 
     /// <summary>
@@ -201,7 +240,8 @@ public sealed class RouteEngine
         PathLocation destination,
         DynamicCost costing,
         ModeCosting modeCosting,
-        TravelMode mode)
+        TravelMode mode,
+        Options? options = null)
     {
         // If bidirectional A* disable use of destination-only edges on the first pass. Other path
         // algorithms can use destination-only edges on the first pass.
@@ -209,7 +249,7 @@ public sealed class RouteEngine
         costing.SetAllowDestinationOnly(!isBidir);
 
         costing.SetPass(0);
-        List<List<PathInfo>> paths = pathAlgorithm.GetBestPath(origin, destination, _reader, modeCosting, mode);
+        List<List<PathInfo>> paths = pathAlgorithm.GetBestPath(origin, destination, _reader, modeCosting, mode, options);
 
         // Check if we should run a second pass pedestrian route (ferry). Pedestrian is out of scope, so
         // ped_second_pass is always false here; preserved for parity with the C++ condition.
@@ -232,7 +272,7 @@ public sealed class RouteEngine
 
             // Get the best path. Return if not empty (else return the original path).
             List<List<PathInfo>> relaxedPaths =
-                pathAlgorithm.GetBestPath(origin, destination, _reader, modeCosting, mode);
+                pathAlgorithm.GetBestPath(origin, destination, _reader, modeCosting, mode, options);
             if (relaxedPaths.Count != 0)
             {
                 return relaxedPaths;
@@ -247,15 +287,38 @@ public sealed class RouteEngine
     // algorithm via get_path, and stitches the per-pair PathInfo lists into one path with the same
     // elapsed-cost / path-distance offset accumulation and same-edge dedup. Returns the merged path and
     // the ordered list of algorithm names used. Implements the low-reachability through-point retry.
-    private List<PathInfo> DepartAt(
+    private List<List<PathInfo>> DepartAt(
         IReadOnlyList<PathLocation> correlatedInput,
         DynamicCost costing,
         ModeCosting modeCosting,
         TravelMode mode,
+        Options? options,
         out List<string> algorithms)
     {
         List<PathLocation> correlated = correlatedInput.ToList();
         algorithms = new List<string>();
+
+        // Route axis (alternates): multiple DISTINCT whole routes between the SAME single origin and
+        // destination. Only meaningful for a single break-to-break pair (no through/via waypoints). When
+        // requested, the algorithm's List<List<PathInfo>> IS the route list - each inner path is a whole
+        // route - so return it directly (no stitch accumulator). This keeps the route axis cleanly
+        // separate from the leg axis below.
+        bool wantAlternates = options is not null && options.HasAlternates && options.Alternates != 0 &&
+                              correlated.Count == 2;
+        if (wantAlternates)
+        {
+            PathLocation altOrigin = correlated[0];
+            PathLocation altDestination = correlated[1];
+            PathAlgorithm alg = GetPathAlgorithm(altOrigin, altDestination);
+            alg.Clear();
+            algorithms.Add(alg.Name());
+
+            // Pass the alternates-requesting options so GetBestPath sets desired_paths_count > 1.
+            return GetPath(alg, altOrigin, altDestination, costing, modeCosting, mode, options);
+        }
+
+        // Leg axis (via / through, or single route without alternates): stitch each consecutive pair's
+        // PRIMARY path into one merged route. Returned as a one-element route list.
         var path = new List<PathInfo>();
         var last_edge = GraphId.Invalid;
         bool allowRetry = true;
@@ -302,7 +365,7 @@ public sealed class RouteEngine
             ++destinationIdx;
         }
 
-        return path;
+        return path.Count == 0 ? new List<List<PathInfo>>() : new List<List<PathInfo>> { path };
     }
 
     // Faithful port of the route_two_locations lambda inside path_depart_at (time-zone propagation and
@@ -335,45 +398,46 @@ public sealed class RouteEngine
             origin.Edges.RemoveAll(e => e.Id != keep);
         }
 
-        // Get best path and keep it.
+        // Get best path and keep it. This is the LEG axis: only the PRIMARY path is stitched per pair.
+        // GetPath is called without alternates options (default null), so it returns a single path; even
+        // if an algorithm ever returned more, only tempPaths[0] is used - alternates (the route axis)
+        // never leak into the leg accumulator. See DepartAt's two-axis note.
         List<List<PathInfo>> tempPaths = GetPath(pathAlgorithm, origin, destination, costing, modeCosting, mode);
-        if (tempPaths.Count == 0)
+        if (tempPaths.Count == 0 || tempPaths[0].Count == 0)
         {
             return false;
         }
 
-        foreach (List<PathInfo> tempPath in tempPaths)
+        List<PathInfo> tempPath = tempPaths[0];
+        last_edge = tempPath[^1].Edgeid;
+
+        // Merge through legs by updating the time and splicing the lists.
+        if (path.Count != 0)
         {
-            last_edge = tempPath[^1].Edgeid;
-
-            // Merge through legs by updating the time and splicing the lists.
-            if (path.Count != 0)
+            Cost offset = path[^1].ElapsedCost;
+            float distanceOffset = path[^1].PathDistance;
+            foreach (PathInfo i in tempPath)
             {
-                Cost offset = path[^1].ElapsedCost;
-                float distanceOffset = path[^1].PathDistance;
-                foreach (PathInfo i in tempPath)
-                {
-                    i.ElapsedCost += offset;
-                    i.PathDistance += distanceOffset;
-                }
-
-                // Connects via the same edge so we only need it once. (The proto edge_trimming
-                // at_node computation is excluded; the same-edge dedup it gates is preserved: when the
-                // last edge of the accumulated path equals the first edge of the next leg and the join
-                // is at a node, drop the duplicate. With trimming excluded we conservatively dedup the
-                // shared edge, which is the node-join case for through/via waypoints.)
-                if (path[^1].Edgeid == tempPath[0].Edgeid)
-                {
-                    path.RemoveAt(path.Count - 1);
-                }
-
-                path.AddRange(tempPath);
+                i.ElapsedCost += offset;
+                i.PathDistance += distanceOffset;
             }
-            else
+
+            // Connects via the same edge so we only need it once. (The proto edge_trimming
+            // at_node computation is excluded; the same-edge dedup it gates is preserved: when the
+            // last edge of the accumulated path equals the first edge of the next leg and the join
+            // is at a node, drop the duplicate. With trimming excluded we conservatively dedup the
+            // shared edge, which is the node-join case for through/via waypoints.)
+            if (path[^1].Edgeid == tempPath[0].Edgeid)
             {
-                // Didn't need to merge.
-                path.AddRange(tempPath);
+                path.RemoveAt(path.Count - 1);
             }
+
+            path.AddRange(tempPath);
+        }
+        else
+        {
+            // Didn't need to merge.
+            path.AddRange(tempPath);
         }
 
         return true;

@@ -29,9 +29,11 @@
 //     missing-dependency policy). recost_forward (sif/recost.h) is likewise a later slice; FormPath
 //     reconstructs the path edges + per-edge labels directly from the settled edge labels (the costs
 //     already computed during expansion), which is sufficient to consume a route. The alternates
-//     viability filters (alternates.h: filter/validate_alternate_*) are NOT ported; desired_paths_count_
-//     is honored but only the primary path is emitted (alternates require recost + the alternates
-//     module). The expansion-tracking callback uses the ported plain-C# enums (no proto Expansion).
+//     viability filters (alternates.h: filter/validate_alternate_*) are ported in Alternates.cs and
+//     wired into FormPath (stretch cull + max-sharing + the sharing/stretch/local-optimality
+//     accept-predicate); desired_paths_count_ is still driven by options.HasAlternates (nothing sets
+//     Alternates yet), so only the primary path is emitted at runtime. The expansion-tracking callback
+//     uses the ported plain-C# enums (no proto Expansion).
 //   - RecoverShortcut is not on the ported GraphReader (shortcut_recovery_t cache excluded); the
 //     recover_shortcut graph-walk from shortcut_recovery.h is ported inline here as RecoverShortcut so
 //     FormPath expands shortcut edges into their underlying edges exactly as the engine does.
@@ -58,7 +60,7 @@ namespace SharpNinja.Valhalla.Thor;
 /// Candidate connections - a directed edge and its opposing directed edge are both temporarily
 /// labeled. Stores the edge Ids and its cost. Faithful port of <c>struct CandidateConnection</c>.
 /// </summary>
-public struct CandidateConnection
+public struct CandidateConnection : IComparable<CandidateConnection>
 {
     /// <summary>The directed edge on the forward tree that connects.</summary>
     public GraphId Edgeid;
@@ -75,6 +77,54 @@ public struct CandidateConnection
         Edgeid = edgeid;
         OppEdgeid = oppEdgeid;
         Cost = cost;
+    }
+
+    /// <summary>
+    /// Orders by <see cref="Cost"/> ascending (mirroring the C++ <c>operator&lt;</c> used by
+    /// <c>std::sort</c> in filter_alternates_by_stretch), with a deterministic <see cref="GraphId"/>
+    /// tie-break on <see cref="Edgeid"/> then <see cref="OppEdgeid"/> so equal-cost connections emit in
+    /// a stable order.
+    /// </summary>
+    public int CompareTo(CandidateConnection other)
+    {
+        int byCost = Cost.CompareTo(other.Cost);
+        if (byCost != 0)
+        {
+            return byCost;
+        }
+
+        int byEdge = Edgeid.CompareTo(other.Edgeid);
+        if (byEdge != 0)
+        {
+            return byEdge;
+        }
+
+        return OppEdgeid.CompareTo(other.OppEdgeid);
+    }
+
+    /// <summary>
+    /// Reproduces <c>std::lower_bound(connections, max_cost)</c>: given a list already sorted by
+    /// <see cref="Cost"/>, returns the index of the first connection whose cost is &gt;= <paramref name="maxCost"/>
+    /// (the cull point used by <see cref="Alternates.FilterAlternatesByStretch"/>).
+    /// </summary>
+    public static int LowerBoundByCost(List<CandidateConnection> connections, float maxCost)
+    {
+        int lo = 0;
+        int hi = connections.Count;
+        while (lo < hi)
+        {
+            int mid = lo + ((hi - lo) / 2);
+            if (connections[mid].Cost < maxCost)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+
+        return lo;
     }
 }
 
@@ -1290,10 +1340,25 @@ public sealed class BidirectionalAStar : PathAlgorithm
         PathLocation dest,
         TimeInfo timeInfo)
     {
-        // PORT-NOTE: the alternates stretch/sharing filters (alternates.h) and recost_forward
-        // (recost.h) are later port slices; we emit the primary path reconstructed directly from the
-        // settled labels (their costs were already computed during expansion). desired_paths_count_ is
-        // honored only for the primary path.
+        // The alternates stretch/sharing viability filters (alternates.h) are ported in Alternates.cs
+        // and wired here: cull connections beyond the stretch tolerance, compute the sharing tolerance,
+        // and gate each candidate through the sharing/stretch/local-optimality accept-predicate. Each
+        // emitted path is recosted via sif::recost_forward (Recost.Forward) so its edges carry a
+        // faithful per-edge elapsed_cost, transition_cost, and cumulative path_distance.
+        if (_desiredPathsCount > 1)
+        {
+            // Cull alternate paths longer than the maximum stretch.
+            // TODO: we should skip adding the connection at all if it's greater than stretch.
+            Alternates.FilterAlternatesByStretch(_bestConnections);
+        }
+
+        // For looking up edge ids on previously chosen best paths (mutated across the loop by
+        // ValidateAlternateBySharing).
+        var sharedEdgeIds = new List<HashSet<GraphId>>();
+
+        // Get the maximum amount of sharing based on the origin->destination distance.
+        float maxSharing = _desiredPathsCount > 1 ? Alternates.GetMaxSharing(origin, dest) : 0.0f;
+
         var paths = new List<List<PathInfo>>();
 
         for (int connIdx = 0; paths.Count < _desiredPathsCount && connIdx < _bestConnections.Count; ++connIdx)
@@ -1384,84 +1449,73 @@ public sealed class BidirectionalAStar : PathAlgorithm
                 }
             }
 
-            // Build PathInfo objects from the settled labels (PORT-NOTE: no recost; costs taken
-            // directly from the forward/reverse labels along the connection). Forward portion carries
-            // its own elapsed/transition costs; reverse portion is reconstructed with cumulative cost
-            // measured from the forward connection cost outward (matching the engine's elapsed times to
-            // within the recost tolerance for the supported time-independent case).
-            var path = BuildPathInfos(pathEdges, idx1, idx2, recoveredInnerEdges);
-            if (path.Count > 0)
+            // Once we recovered the whole path we construct the list of PathInfo objects by recosting
+            // the reconstructed edge sequence. PORT-NOTE: faithful port of the upstream recost block -
+            // build edge_cb / label_cb closures over path_edges, compute source/target percent from the
+            // correlated endpoints via find_percent_along, and call sif::recost_forward with
+            // ignore_access = true so every reconstructed path edge gets a real per-edge elapsed_cost,
+            // transition_cost, and cumulative-from-origin path_distance (replacing the former
+            // approximate BuildPathInfos reconstruction).
+            var path = new List<PathInfo>(pathEdges.Count);
+
+            int edgeItr = 0;
+            GraphId EdgeCb() => edgeItr >= pathEdges.Count ? GraphId.Invalid : pathEdges[edgeItr++];
+
+            void LabelCb(PathEdgeLabel label) => path.Add(new PathInfo(
+                label.Mode(), label.Cost(), label.Edgeid(), 0, label.PathDistance(),
+                label.RestrictionIdx(), label.TransitionCost(),
+                recoveredInnerEdges.Contains(label.Edgeid())));
+
+            float sourcePct;
+            try
+            {
+                sourcePct = Recost.FindPercentAlong(origin, pathEdges[0]);
+            }
+            catch
+            {
+                throw new InvalidOperationException("Could not find candidate edge used for origin label");
+            }
+
+            float targetPct;
+            try
+            {
+                targetPct = Recost.FindPercentAlong(dest, pathEdges[^1]);
+            }
+            catch
+            {
+                throw new InvalidOperationException("Could not find candidate edge used for destination label");
+            }
+
+            // recost edges in the final path; ignore access restrictions.
+            // TODO: actually we should not ignore access restrictions: if the reverse path traversed a
+            //   closed edge due to time restrictions, we could do a mini traversal to circumvent the
+            //   closed edge(s).
+            try
+            {
+                bool invariant = options.DateTimeType == DateTimeType.Invariant;
+                Recost.Forward(graphreader, _costing, EdgeCb, LabelCb, sourcePct, targetPct, timeInfo,
+                    invariant, true);
+            }
+            catch (Exception)
+            {
+                // Bi-directional A* failed to recost this candidate's final path; skip it (continue)
+                // instead of aborting the whole route.
+                continue;
+            }
+
+            // For the first path just add it; subsequent paths only if they pass the viability tests.
+            // Faithful port of the alternates accept-predicate (alternates.h). sharedEdgeIds is carried
+            // across the loop and mutated by ValidateAlternateBySharing.
+            if (paths.Count == 0 ||
+                (Alternates.ValidateAlternateBySharing(sharedEdgeIds, paths, path, maxSharing) &&
+                 Alternates.ValidateAlternateByStretch(paths[0], path) &&
+                 Alternates.ValidateAlternateByLocalOptimality(path)))
             {
                 paths.Add(path);
             }
         }
 
         return paths;
-    }
-
-    // Reconstructs the ordered PathInfo list for one connection from the settled forward/reverse
-    // labels. PORT-NOTE: stands in for sif::recost_forward (later slice); the per-edge elapsed cost is
-    // taken from the labels, accumulating the reverse-tree costs in forward order.
-    private List<PathInfo> BuildPathInfos(
-        List<GraphId> pathEdges,
-        uint idx1,
-        uint idx2,
-        HashSet<GraphId> recoveredInnerEdges)
-    {
-        var path = new List<PathInfo>(pathEdges.Count);
-        if (pathEdges.Count == 0)
-        {
-            return path;
-        }
-
-        // Collect the forward labels (origin -> connection) in forward order.
-        var forwardLabels = new List<BDEdgeLabel>();
-        for (uint i = idx1; i != GraphConstants.InvalidLabel; i = _edgelabelsForward[(int)i].Predecessor())
-        {
-            forwardLabels.Add(_edgelabelsForward[(int)i]);
-        }
-
-        forwardLabels.Reverse();
-
-        // Cost at the connection (end of forward portion).
-        Cost connectionCost = forwardLabels.Count > 0 ? forwardLabels[^1].Cost() : new Cost();
-
-        // Emit forward labels directly (each label already carries elapsed cost + its transition cost).
-        foreach (BDEdgeLabel lab in forwardLabels)
-        {
-            path.Add(new PathInfo(lab.Mode(), lab.Cost(), lab.Edgeid(), 0, lab.PathDistance(),
-                lab.RestrictionIdx(), lab.TransitionCost(),
-                recoveredInnerEdges.Contains(lab.Edgeid()), lab.Shortcut()));
-        }
-
-        // Collect the reverse labels (connection -> destination) starting at the predecessor of idx2.
-        var reverseLabels = new List<BDEdgeLabel>();
-        for (uint i = _edgelabelsReverse[(int)idx2].Predecessor(); i != GraphConstants.InvalidLabel;
-             i = _edgelabelsReverse[(int)i].Predecessor())
-        {
-            reverseLabels.Add(_edgelabelsReverse[(int)i]);
-        }
-
-        // The reverse labels descend in cost toward the destination edge; convert each to a cumulative
-        // elapsed cost from the origin: elapsed(edge) = connectionCost + (revRootCost - revLabelCost).
-        Cost revRootCost = reverseLabels.Count > 0
-            ? _edgelabelsReverse[(int)_edgelabelsReverse[(int)idx2].Predecessor()].Cost()
-            : new Cost();
-
-        // We want the destination edge last. The reverse tree walks destination..connection, so the
-        // labels are already in order connection->destination as we descend predecessors; append in
-        // that order using the opposing edge ids that were pushed into pathEdges.
-        foreach (BDEdgeLabel lab in reverseLabels)
-        {
-            // cumulative cost grows as we approach destination: base + (root - current).
-            Cost elapsed = connectionCost + (revRootCost - lab.Cost());
-            GraphId oppId = lab.OppEdgeid();
-            path.Add(new PathInfo(lab.Mode(), elapsed, oppId, 0, lab.PathDistance(),
-                lab.RestrictionIdx(), lab.TransitionCost(),
-                recoveredInnerEdges.Contains(oppId), lab.Shortcut()));
-        }
-
-        return path;
     }
 
     // ===================== Restricted (sif) inline helper =====================

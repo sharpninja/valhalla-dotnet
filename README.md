@@ -25,7 +25,7 @@ Each module is a fairly direct port of the corresponding Valhalla C++ module, wi
 | `Loki` | `valhalla/loki` | Location correlation: snapping input coordinates onto the graph, closest-edge search | `src/SharpNinja.Valhalla/Loki/` (4 files) | 3 files |
 | `Sif` | `valhalla/sif` | Costing models: `DynamicCost`, `AutoCost`, `TruckCost`, edge labels | `src/SharpNinja.Valhalla/Sif/` (8 files) | 3 files |
 | `Thor` | `valhalla/thor` | Path algorithms: unidirectional and bidirectional A*, trip-leg building | `src/SharpNinja.Valhalla/Thor/` (10 files) | 8 files |
-| `Odin` | `valhalla/odin` | Maneuver building and directions-leg assembly (turn-by-turn structure; narrative prose text is not ported, see [Known gaps](#known-gaps)) | `src/SharpNinja.Valhalla/Odin/` (8 files) | 6 files |
+| `Odin` | `valhalla/odin` | Maneuver building, directions-leg assembly, and en-US narrative prose (`NarrativeBuilder` + embedded locale dictionaries; see [Known gaps](#known-gaps) for remaining parity depth) | `src/SharpNinja.Valhalla/Odin/` | tests under `Odin/` |
 | `Mjolnir` | `valhalla/mjolnir` | Tile builder: OSM PBF parsing, graph construction, enhancement, shortcuts, restrictions | `src/SharpNinja.Valhalla/Mjolnir/` (33 files) | 14 files |
 | `Osm` | - | This package's own on-device provisioning seam (tile-set building, extract retrieval abstractions) | `src/SharpNinja.Valhalla/Osm/` (4 files) | - |
 
@@ -137,10 +137,10 @@ else
 
 ## Known gaps
 
-The embedded client intentionally has two behavior gaps versus a full Valhalla HTTP service; neither affects distance/duration/shape/friction-input accuracy:
+Both original behavior gaps versus a full Valhalla HTTP service are now closed for the surfaced routing behavior:
 
-- **No maneuver narrative text.** `OsmRouteManeuver.Instruction` is always empty - the Odin narrative/prose generation pass is not ported. Maneuver type, distance, duration, and shape indices are all populated.
-- **No alternate routes.** The ported route engine returns a single `TripLeg`, so `OsmRouteResult.Routes` always has exactly one candidate and `OsmRouteRequest.ComputeAlternativeRoutes` is a no-op.
+- **Maneuver narrative text.** `OsmRouteManeuver.Instruction` carries en-US written turn-by-turn prose produced by the ported Odin `NarrativeBuilder` (all driving maneuver families). Remaining upstream-parity depth that the current DTO does not surface - spoken/verbal strings, localized length/time, additional-locale grammar, and the transit/pedestrian/bike-share/indoor maneuver families - is being ported in later slices.
+- **Alternate routes.** When `OsmRouteRequest.ComputeAlternativeRoutes` is set and no via/through points are supplied, the engine computes multiple distinct routes (bidirectional A* with the ported `alternates.h` sharing/stretch viability filters and the `recost.h` forward recost pass) and `OsmRouteResult.Routes` carries them primary-first, then by ascending cost. Via routes stay on the single-leg axis. Small maps may still yield a single route when no viable alternate exists.
 
 ## Build
 

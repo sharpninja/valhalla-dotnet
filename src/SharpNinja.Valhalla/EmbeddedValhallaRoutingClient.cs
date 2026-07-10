@@ -19,17 +19,23 @@ namespace SharpNinja.Valhalla;
 /// <see cref="OsmNavigationStrategySupport"/> and the two strategies need no changes.
 /// </summary>
 /// <remarks>
-/// Phase-4 known gaps (do not block):
+/// Known gaps (do not block):
 /// <list type="bullet">
-/// <item>Maneuver <c>Instruction</c> text is empty (the Odin narrative/prose pass is not ported).
-/// Friction ranking and shape rendering are unaffected.</item>
-/// <item>No alternate routes: the ported <see cref="RouteEngine.Route"/> returns a single
-/// <see cref="TripLeg"/>. Friction ranking degrades to "rank of one", which is correct behavior.
-/// <see cref="OsmRouteRequest.ComputeAlternativeRoutes"/> is therefore a no-op here.</item>
+/// <item>Maneuver <c>Instruction</c> prose is produced by the ported Odin NarrativeBuilder (en-US
+/// written turn-by-turn text). Verbal / additional-locale strings are later parity slices but are not
+/// surfaced by <see cref="OsmRouteManeuver"/>.</item>
+/// <item>Alternate routes: when <see cref="OsmRouteRequest.ComputeAlternativeRoutes"/> is set and no
+/// vias are supplied, the engine computes multiple distinct routes (sharing / stretch viability
+/// filtered) and <see cref="OsmRouteResult.Routes"/> carries them primary-first, then by ascending
+/// cost. Small maps may still yield a single route when no viable alternate exists.</item>
 /// </list>
 /// </remarks>
 public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 {
+	// Number of alternate routes requested when ComputeAlternativeRoutes is set (primary + up to this
+	// many alternates). The viability filters may return fewer if the map has no distinct alternates.
+	private const uint DefaultAlternateRouteCount = 2u;
+
 	private readonly EmbeddedValhallaGraphReaderFactory _readerFactory;
 	private readonly IOsmTileDirectoryProvider _tileDirectoryProvider;
 	private readonly ILogger<EmbeddedValhallaRoutingClient> _logger;
@@ -88,19 +94,38 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 			var destination = new Location(ToPoint(request.Destination), Location.StopTypeValue.Break);
 			var vias = BuildVias(request.Via);
 
-			var engine = new RouteEngine(reader, () => cancellationToken.ThrowIfCancellationRequested());
-			var tripLeg = engine.Route(reader, costing, origin, destination, vias);
+			// Alternate routes are the route axis: distinct whole routes for a single origin/destination
+			// pair. They are not meaningful when the caller pins via/through waypoints (that is the leg
+			// axis), so alternates are only requested when ComputeAlternativeRoutes is set and there are
+			// no vias. Default count is 2 (primary + up to 2 alternates).
+			uint alternates = request.ComputeAlternativeRoutes && (request.Via is null || request.Via.Count == 0)
+				? DefaultAlternateRouteCount
+				: 0u;
 
 			var options = new Options
 			{
-				DirectionsType = DirectionsType.Maneuvers,
+				// Instructions runs the Odin NarrativeBuilder to populate maneuver prose (Instruction);
+				// Maneuvers would produce structure only. en-US is the surfaced language.
+				DirectionsType = DirectionsType.Instructions,
 				Units = OptionsUnits.Kilometers,
 				RoundaboutExits = true,
+				Language = "en-US",
+				Alternates = alternates,
+				HasAlternates = alternates != 0,
 			};
-			var directionsLeg = DirectionsBuilder.Build(options, tripLeg);
 
-			var candidate = MapCandidate(tripLeg, directionsLeg);
-			return new OsmRouteResult(new[] { candidate }, null);
+			var engine = new RouteEngine(reader, () => cancellationToken.ThrowIfCancellationRequested());
+			IReadOnlyList<TripLeg> legs = engine.RouteAlternates(reader, costing, origin, destination, vias, options);
+
+			// Fan out: one OsmRouteCandidate per route (primary first, alternates by ascending cost).
+			var candidates = new List<OsmRouteCandidate>(legs.Count);
+			foreach (var leg in legs)
+			{
+				var directionsLeg = DirectionsBuilder.Build(options, leg);
+				candidates.Add(MapCandidate(leg, directionsLeg));
+			}
+
+			return new OsmRouteResult(candidates, null);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
@@ -331,9 +356,9 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 	private static OsmRouteManeuver MapManeuver(Maneuver maneuver)
 		=> new(
 			Type: (int)maneuver.Type(),
-			// Prose is NOT ported (Odin narrative pass deferred); empty string is safe - the friction
-			// model and shape rendering do not use it.
-			Instruction: string.Empty,
+			// Odin NarrativeBuilder prose (written turn-by-turn text), produced when the route is built
+			// with DirectionsType.Instructions above.
+			Instruction: maneuver.Instruction(),
 			DistanceMeters: maneuver.Length(false) * 1000d,
 			DurationSeconds: (int)Math.Round(maneuver.Time(), MidpointRounding.AwayFromZero),
 			// Single merged leg: shape indices are leg-local with no offset.

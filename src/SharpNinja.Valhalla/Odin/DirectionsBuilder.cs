@@ -66,8 +66,15 @@ public static class DirectionsBuilder
             var maneuversBuilder = new ManeuversBuilder(options, etp);
             maneuvers = maneuversBuilder.Build();
 
-            // PORT-NOTE (DEFER): DirectionsType.Instructions would additionally run the
-            // NarrativeBuilder to produce localized prose; that prose family is not ported.
+            // When instructions are requested, run the narrative builder to fill in the localized
+            // WRITTEN maneuver prose (verbal families remain a later slice). DirectionsType.Maneuvers
+            // stays structure-only. Faithful port of the directionsbuilder.cc narrative pass.
+            if (options.DirectionsType == DirectionsType.Instructions)
+            {
+                NarrativeBuilderFactory
+                    .Create(options, etp, NarrativeDictionaryLoader.Get(options.Language))
+                    .Build(maneuvers);
+            }
         }
 
         // Return trip directions

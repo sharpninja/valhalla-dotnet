@@ -89,6 +89,12 @@ public sealed class Options
     /// </summary>
     public bool RoundaboutExits { get; set; } = true;
 
+    /// <summary>
+    /// The BCP-47 language tag used to select the localized narrative dictionary. Faithful port of
+    /// the proto <c>language</c> option (defaults to en-US, the odin default locale).
+    /// </summary>
+    public string Language { get; set; } = "en-US";
+
     /// <summary>Convenience: true if <see cref="Units"/> selects miles.</summary>
     public bool UnitsAreMiles => Units == OptionsUnits.Miles;
 }

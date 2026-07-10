@@ -17,7 +17,8 @@
 // TransitPlatformInfo and the transit_* members) belongs to the EXCLUDED transit module. The
 // transit_connection flag and IsTransit() are kept (they are simple structural predicates), but the
 // transit info objects and their accessors are omitted. The verbal_formatter member (a
-// baldr::VerbalTextFormatter) is part of the prose family and is omitted as well.
+// baldr::VerbalTextFormatter) IS carried (A2): the verbal narrative path reads it to expand route
+// numbers for text-to-speech; it defaults to null (raw value, matching the written path).
 //
 // PORT-NOTE: The C++ ToString / ToParameterString are guarded by LOGGING_LEVEL_TRACE and emit prose
 // debug text; they are omitted from this structural port.
@@ -135,6 +136,7 @@ public sealed class Maneuver
     private string _verbalTransitionAlertInstruction;
     private string _verbalPreTransitionInstruction;
     private string _verbalPostTransitionInstruction;
+    private VerbalTextFormatter? _verbalFormatter;
     private bool _tee;
     private TrailType _trailType;
     private bool _imminentVerbalMultiCue;
@@ -712,6 +714,17 @@ public sealed class Maneuver
 
     /// <summary>True if a verbal post-transition instruction is present.</summary>
     public bool HasVerbalPostTransitionInstruction() => _verbalPostTransitionInstruction.Length != 0;
+
+    /// <summary>
+    /// The verbal text formatter used to prepare street/sign strings for text-to-speech (may be
+    /// null). Faithful port of <c>verbal_formatter()</c>. A2 port: the maneuver builder assigns a
+    /// per-admin <see cref="VerbalTextFormatter"/> (e.g. US) so the verbal formers expand route
+    /// numbers; when null the raw street/sign value is used, matching the written path.
+    /// </summary>
+    public VerbalTextFormatter? VerbalFormatter() => _verbalFormatter;
+
+    /// <summary>Sets the verbal text formatter. Faithful port of <c>set_verbal_formatter()</c>.</summary>
+    public void SetVerbalFormatter(VerbalTextFormatter? verbalFormatter) => _verbalFormatter = verbalFormatter;
 
     /// <summary>True if the maneuver is at a T-intersection. Faithful port of <c>tee()</c>.</summary>
     public bool Tee() => _tee;
