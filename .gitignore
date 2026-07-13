@@ -26,3 +26,8 @@ artifacts/test-results/
 # Test results
 [Tt]est[Rr]esults/
 *.trx
+
+# Local OSM validation extracts
+artifacts/*.osm.pbf
+artifacts/*.md
+artifacts/*.json
