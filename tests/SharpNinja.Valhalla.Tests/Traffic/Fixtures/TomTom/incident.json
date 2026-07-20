@@ -1,0 +1,29 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-86.7300, 36.1500],
+          [-86.7400, 36.1530]
+        ]
+      },
+      "properties": {
+        "id": "tomtom-incident-1",
+        "originalId": "TT-ORIGINAL-1",
+        "iconCategory": 2,
+        "magnitudeOfDelay": 3,
+        "delay": 420,
+        "roadClosed": false,
+        "observedAt": "2026-07-18T11:50:00Z",
+        "updatedAt": "2026-07-18T11:58:30Z",
+        "startTime": "2026-07-18T11:45:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "events": [
+          { "description": "Crash blocking the right lane" }
+        ]
+      }
+    }
+  ]
+}

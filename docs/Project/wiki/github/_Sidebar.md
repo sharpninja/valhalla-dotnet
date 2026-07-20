@@ -1,4 +1,5 @@
 - [Home](Home)
+- [SharpNinja.Valhalla Project Guide](Project-Guide)
 - [Functional Requirements](Functional-Requirements)
 - [Technical Requirements](Technical-Requirements)
 - [Testing Requirements](Testing-Requirements)

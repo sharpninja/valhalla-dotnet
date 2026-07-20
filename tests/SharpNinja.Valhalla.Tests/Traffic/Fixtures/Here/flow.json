@@ -1,0 +1,32 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "id": "here-flow-1",
+      "location": {
+        "shape": {
+          "links": [
+            {
+              "points": [
+                { "lat": 36.1263, "lng": -86.6774 },
+                { "lat": 36.1370, "lng": -86.7040 },
+                { "lat": 36.1490, "lng": -86.7330 }
+              ]
+            }
+          ]
+        }
+      },
+      "currentFlow": {
+        "speed": 40,
+        "freeFlow": 80,
+        "traversalTime": 240,
+        "freeFlowTravelTime": 120,
+        "confidence": 0.94,
+        "jamFactor": 8.0,
+        "traversability": "open",
+        "observedAt": "2026-07-18T11:57:00Z",
+        "validUntil": "2026-07-18T12:15:00Z"
+      }
+    }
+  ]
+}

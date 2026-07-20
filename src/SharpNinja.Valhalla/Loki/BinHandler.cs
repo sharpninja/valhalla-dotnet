@@ -228,15 +228,11 @@ internal sealed class BinHandler
 
         // if both reaches are nonzero and the opposing edge is not filtered then both edges share reach
         GraphTile? oppTile = tile;
-        DirectedEdge? oppEdge = _reader.GetOpposingEdge(edge, ref oppTile);
-        if (reach.Outbound > 0 && reach.Inbound > 0 && oppEdge is not null &&
-            _costing.Allowed(oppEdge.Value, oppTile!, DisallowShortcut))
+        GraphId oppId = _reader.GetOpposingEdgeId(edgeId, out DirectedEdge? oppEdge, ref oppTile);
+        if (reach.Outbound > 0 && reach.Inbound > 0 && oppId.IsValid() && oppEdge is not null &&
+            _costing.Allowed(oppEdge.Value, oppTile!, oppId.Id(), DisallowShortcut))
         {
-            GraphId oppId = _reader.GetOpposingEdgeId(edgeId);
-            if (oppId.IsValid())
-            {
-                _directedReaches[oppId.Value] = reach;
-            }
+            _directedReaches[oppId.Value] = reach;
         }
 
         return reach;
@@ -295,7 +291,7 @@ internal sealed class BinHandler
                 sbyte layer = info.Layer();
 
                 // re-evaluate the filter because we may be seeing these edges a second time
-                if (_costing.Allowed(edge, tile, DisallowShortcut) &&
+                if (_costing.Allowed(edge, tile, e, DisallowShortcut) &&
                     !Search.SearchFilterMatch(edge, _costing, tile, e, location.GetSearchFilter()))
                 {
                     DirectedReach reach = GetReach(id, edge);
@@ -322,7 +318,7 @@ internal sealed class BinHandler
                 }
 
                 uint otherIdx = otherId.Id();
-                if (_costing.Allowed(otherEdge.Value, otherTile!, DisallowShortcut) &&
+                if (_costing.Allowed(otherEdge.Value, otherTile!, otherIdx, DisallowShortcut) &&
                     !Search.SearchFilterMatch(otherEdge.Value, _costing, otherTile!, otherIdx, location.GetSearchFilter()))
                 {
                     float oppAngle = (angle + 180.0f) % 360.0f;
@@ -430,7 +426,8 @@ internal sealed class BinHandler
         // correlate its evil twin
         GraphTile? otherTile = null;
         GraphId opposingEdgeId = _reader.GetOpposingEdgeId(candidate.EdgeId, out DirectedEdge? otherEdge, ref otherTile);
-        if (otherEdge is not null && _costing.Allowed(otherEdge.Value, otherTile!, DisallowShortcut) &&
+        if (otherEdge is not null &&
+            _costing.Allowed(otherEdge.Value, otherTile!, opposingEdgeId.Id(), DisallowShortcut) &&
             !Search.SearchFilterMatch(otherEdge.Value, _costing, otherTile!, opposingEdgeId.Id(), location.GetSearchFilter()))
         {
             float oppAngle = (angle + 180.0f) % 360.0f;
@@ -476,12 +473,12 @@ internal sealed class BinHandler
             DirectedEdge edge = tile.DirectedEdge(edgeId);
 
             // if this edge is filtered, try the opposing edge instead
-            if (!_costing.Allowed(edge, tile, DisallowShortcut))
+            if (!_costing.Allowed(edge, tile, edgeId.Id(), DisallowShortcut))
             {
                 GraphTile? oppTile = tile;
                 GraphId oppEdgeid = _reader.GetOpposingEdgeId(edgeId, out DirectedEdge? oppEdge, ref oppTile);
                 if (!oppEdgeid.IsValid() || oppEdge is null ||
-                    !_costing.Allowed(oppEdge.Value, oppTile!, DisallowShortcut))
+                    !_costing.Allowed(oppEdge.Value, oppTile!, oppEdgeid.Id(), DisallowShortcut))
                 {
                     continue;
                 }
@@ -584,7 +581,7 @@ internal sealed class BinHandler
                     GraphTile? oppTile = tile;
                     GraphId oppEdgeid = _reader.GetOpposingEdgeId(edgeId, out DirectedEdge? oppEdge, ref oppTile);
                     if (oppEdgeid.IsValid() && oppEdge is not null &&
-                        _costing.Allowed(oppEdge.Value, oppTile!, DisallowShortcut) &&
+                        _costing.Allowed(oppEdge.Value, oppTile!, oppEdgeid.Id(), DisallowShortcut) &&
                         !Search.SearchFilterMatch(oppEdge.Value, _costing, oppTile!, oppEdgeid.Id(), p.Location.GetSearchFilter()))
                     {
                         DirectedReach oppReach = CheckReachability(begin, end, oppTile!, oppEdge.Value, oppEdgeid);

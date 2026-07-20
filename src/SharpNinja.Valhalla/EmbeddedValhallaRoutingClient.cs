@@ -7,6 +7,8 @@ using SharpNinja.Valhalla.Midgard;
 using SharpNinja.Valhalla.Odin;
 using SharpNinja.Valhalla.Sif;
 using SharpNinja.Valhalla.Thor;
+using SharpNinja.Valhalla.Traffic.Routing;
+using SharpNinja.Valhalla.Traffic.Tiles;
 
 namespace SharpNinja.Valhalla;
 
@@ -39,15 +41,18 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 	private readonly EmbeddedValhallaGraphReaderFactory _readerFactory;
 	private readonly IOsmTileDirectoryProvider _tileDirectoryProvider;
 	private readonly ILogger<EmbeddedValhallaRoutingClient> _logger;
+	private readonly TimeProvider _timeProvider;
 
 	public EmbeddedValhallaRoutingClient(
 		EmbeddedValhallaGraphReaderFactory readerFactory,
 		IOsmTileDirectoryProvider tileDirectoryProvider,
-		ILogger<EmbeddedValhallaRoutingClient> logger)
+		ILogger<EmbeddedValhallaRoutingClient> logger,
+		TimeProvider? timeProvider = null)
 	{
 		_readerFactory = readerFactory ?? throw new ArgumentNullException(nameof(readerFactory));
 		_tileDirectoryProvider = tileDirectoryProvider ?? throw new ArgumentNullException(nameof(tileDirectoryProvider));
 		_logger = logger ?? throw new ArgumentNullException(nameof(logger));
+		_timeProvider = timeProvider ?? TimeProvider.System;
 	}
 
 	public async Task<OsmRouteResult> CalculateRouteAsync(
@@ -61,25 +66,55 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 		// HTTP URL) is ignored here.
 		var tileDirectory = await _tileDirectoryProvider.GetTileDirectoryAsync(cancellationToken).ConfigureAwait(false);
 
-		if (!_readerFactory.TryGetReader(tileDirectory, out var lease))
+		EmbeddedValhallaGraphReaderFactory.AsyncLease lease;
+		try
 		{
-			// Tile dir unset / missing on disk / no tiles => same gate the legacy HTTP client applied
-			// for a null endpoint.
+			lease = await _readerFactory.AcquireAsync(
+				tileDirectory,
+				request.TrafficSnapshot,
+				cancellationToken).ConfigureAwait(false);
+		}
+		catch (TrafficSnapshotStoreException exception)
+		{
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				exception.Code,
+				exception.Message,
+				request.TrafficSnapshot?.Version));
+		}
+		catch (DirectoryNotFoundException exception) when (request.TrafficSnapshot is not null)
+		{
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				TrafficSnapshotFailureCode.Missing,
+				exception.Message,
+				request.TrafficSnapshot.Version));
+		}
+		catch (Exception exception) when (request.TrafficSnapshot is not null
+		                                  && (exception is IOException || exception is UnauthorizedAccessException))
+		{
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				TrafficSnapshotFailureCode.Unreadable,
+				"Traffic snapshot data could not be acquired.",
+				request.TrafficSnapshot.Version));
+		}
+		catch (DirectoryNotFoundException)
+		{
 			return OsmRouteResult.Failure(OsmRoutingErrorCodes.NotConfigured);
 		}
 
-		// The engine work is CPU-bound and synchronous; run it on a worker thread so the async
-		// contract holds. The reader's tile cache is not thread-safe and is shared across requests,
-		// so serialize on the lease gate for the whole computation.
-		return await Task.Run(
-			() =>
-			{
-				lock (lease.Gate)
+		await using (lease.ConfigureAwait(false))
+		{
+			// The engine work is CPU-bound and synchronous; run it on a worker thread while the
+			// async lease pins this exact reader and traffic generation through result materialization.
+			return await Task.Run(
+				() =>
 				{
-					return RouteCore(request, lease.Reader, cancellationToken);
-				}
-			},
-			cancellationToken).ConfigureAwait(false);
+					lock (lease.Gate)
+					{
+						return RouteCore(request, lease.Reader, cancellationToken);
+					}
+				},
+				cancellationToken).ConfigureAwait(false);
+		}
 	}
 
 	private OsmRouteResult RouteCore(OsmRouteRequest request, GraphReader reader, CancellationToken cancellationToken)
@@ -90,9 +125,25 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 
 			var costing = BuildCosting(request);
 
-			var origin = new Location(ToPoint(request.Origin), Location.StopTypeValue.Break);
-			var destination = new Location(ToPoint(request.Destination), Location.StopTypeValue.Break);
+			TimeInfo? trafficTime = request.TrafficSnapshot is null
+				? null
+				: InvariantTrafficTime.Create(request.DepartureTimeUtc ?? _timeProvider.GetUtcNow());
+			var origin = new Location(ToPoint(request.Origin), Location.StopTypeValue.Break)
+			{
+				TimeInfo = trafficTime,
+			};
+			var destination = new Location(ToPoint(request.Destination), Location.StopTypeValue.Break)
+			{
+				TimeInfo = trafficTime,
+			};
 			var vias = BuildVias(request.Via);
+			if (trafficTime is not null && vias is not null)
+			{
+				foreach (Location via in vias)
+				{
+					via.TimeInfo = trafficTime;
+				}
+			}
 
 			// Alternate routes are the route axis: distinct whole routes for a single origin/destination
 			// pair. They are not meaningful when the caller pins via/through waypoints (that is the leg
@@ -112,6 +163,10 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 				Language = "en-US",
 				Alternates = alternates,
 				HasAlternates = alternates != 0,
+				DateTimeType = request.TrafficSnapshot is null
+					? DateTimeType.NoTime
+					: DateTimeType.Invariant,
+				HasDateTimeType = request.TrafficSnapshot is not null,
 			};
 
 			var engine = new RouteEngine(reader, () => cancellationToken.ThrowIfCancellationRequested());
@@ -122,7 +177,20 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 			foreach (var leg in legs)
 			{
 				var directionsLeg = DirectionsBuilder.Build(options, leg);
-				candidates.Add(MapCandidate(leg, directionsLeg));
+				EngineTrafficApplication trafficApplication =
+					request.TrafficSnapshot is null || trafficTime is null
+						? default
+						: CalculateEngineAppliedTraffic(
+							leg,
+							reader,
+							request,
+							trafficTime.Value);
+				candidates.Add(MapCandidate(
+					leg,
+					directionsLeg,
+					request.TrafficSnapshot,
+					reader,
+					trafficApplication.DelaySeconds));
 			}
 
 			return new OsmRouteResult(candidates, null);
@@ -144,11 +212,35 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 			_logger.LogWarning(ex, "Embedded Valhalla routing found no path");
 			return OsmRouteResult.Failure(OsmRoutingErrorCodes.Parse);
 		}
+		catch (TrafficSnapshotStoreException ex)
+		{
+			_logger.LogWarning(ex, "Embedded Valhalla traffic snapshot failure");
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				ex.Code,
+				ex.Message,
+				request.TrafficSnapshot?.Version));
+		}
+		catch (IOException ex) when (request.TrafficSnapshot is not null)
+		{
+			_logger.LogWarning(ex, "Embedded Valhalla traffic snapshot I/O failure");
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				TrafficSnapshotFailureCode.Unreadable,
+				"Traffic snapshot data became unreadable during routing.",
+				request.TrafficSnapshot.Version));
+		}
 		catch (IOException ex)
 		{
 			// Disk I/O reading tiles is the local analog of an HTTP transport failure.
 			_logger.LogWarning(ex, "Embedded Valhalla tile I/O failure");
 			return OsmRouteResult.Failure(OsmRoutingErrorCodes.Transport);
+		}
+		catch (UnauthorizedAccessException ex) when (request.TrafficSnapshot is not null)
+		{
+			_logger.LogWarning(ex, "Embedded Valhalla traffic snapshot access failure");
+			return OsmRouteResult.TrafficFailure(new TrafficSnapshotFailure(
+				TrafficSnapshotFailureCode.Unreadable,
+				"Traffic snapshot data became unreadable during routing.",
+				request.TrafficSnapshot.Version));
 		}
 		catch (UnauthorizedAccessException ex)
 		{
@@ -172,7 +264,9 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 	private static bool IsTruck(string? costing)
 		=> string.Equals(costing, OsmRouteCostings.Truck, StringComparison.OrdinalIgnoreCase);
 
-	private static DynamicCost BuildCosting(OsmRouteRequest request)
+	private static DynamicCost BuildCosting(
+		OsmRouteRequest request,
+		bool includeCurrentTraffic = true)
 	{
 		// Build the request-derived JSON keys, then run the real parser. The parser is the only
 		// thing that populates the CostingOptions the coster reads (defaults + clamping + Has flags),
@@ -184,12 +278,12 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 
 		if (IsTruck(request.Costing))
 		{
-			using var doc = BuildTruckOptionsJson(request);
+			using var doc = BuildTruckOptionsJson(request, includeCurrentTraffic);
 			TruckCostFactory.ParseTruckCostOptions(doc.RootElement, costing, warnings);
 			return TruckCostFactory.CreateTruckCost(costing);
 		}
 
-		using (var doc = BuildAutoOptionsJson(request))
+		using (var doc = BuildAutoOptionsJson(request, includeCurrentTraffic))
 		{
 			// ParseAutoCostOptions reads its keys from a child object under costingOptionsKey.
 			AutoCostFactory.ParseAutoCostOptions(doc.RootElement, "auto", costing, warnings);
@@ -198,7 +292,9 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 		return AutoCostFactory.CreateAutoCost(costing);
 	}
 
-	private static JsonDocument BuildTruckOptionsJson(OsmRouteRequest request)
+	private static JsonDocument BuildTruckOptionsJson(
+		OsmRouteRequest request,
+		bool includeCurrentTraffic)
 	{
 		// Same null-options fallback the HTTP client used.
 		var truck = request.TruckOptions ?? new OsmTruckRouteOptions(
@@ -230,6 +326,7 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 			}
 
 			writer.WriteBoolean("enable_static_friction", request.EnableStaticFriction);
+				WriteTrafficSpeedTypesIfNeeded(writer, request, includeCurrentTraffic);
 
 			writer.WriteEndObject();
 		}
@@ -237,7 +334,9 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 		return JsonDocument.Parse(stream.ToArray());
 	}
 
-	private static JsonDocument BuildAutoOptionsJson(OsmRouteRequest request)
+	private static JsonDocument BuildAutoOptionsJson(
+		OsmRouteRequest request,
+		bool includeCurrentTraffic)
 	{
 		using var stream = new MemoryStream();
 		using (var writer = new Utf8JsonWriter(stream))
@@ -261,14 +360,36 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 				writer.WriteNumber("unprotected_left_avoidance_meters", request.UnprotectedLeftAvoidanceMeters);
 			}
 
-			writer.WriteEndObject();
+				WriteTrafficSpeedTypesIfNeeded(writer, request, includeCurrentTraffic);
+				writer.WriteEndObject();
 			writer.WriteEndObject();
 		}
 
 		return JsonDocument.Parse(stream.ToArray());
 	}
 
-	// ------------------------------------------------------------------
+		private static void WriteTrafficSpeedTypesIfNeeded(
+			Utf8JsonWriter writer,
+			OsmRouteRequest request,
+			bool includeCurrentTraffic)
+		{
+			if (request.TrafficSnapshot is null)
+			{
+				return;
+			}
+
+			writer.WritePropertyName("speed_types");
+			writer.WriteStartArray();
+			writer.WriteStringValue("freeflow");
+			writer.WriteStringValue("constrained");
+			if (includeCurrentTraffic)
+			{
+				writer.WriteStringValue("current");
+			}
+			writer.WriteEndArray();
+		}
+
+		// ------------------------------------------------------------------
 	// (b) GeoCoordinate -> Loki Location
 	// ------------------------------------------------------------------
 
@@ -297,7 +418,12 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 	// (c) TripLeg + DirectionsLeg -> OsmRouteCandidate
 	// ------------------------------------------------------------------
 
-	private static OsmRouteCandidate MapCandidate(TripLeg tripLeg, DirectionsLeg directionsLeg)
+	internal static OsmRouteCandidate MapCandidate(
+		TripLeg tripLeg,
+		DirectionsLeg directionsLeg,
+		TrafficSnapshotReference? trafficSnapshot = null,
+		GraphReader? reader = null,
+		int engineAppliedTrafficDelaySeconds = 0)
 	{
 		// Distance: sum the leg edge lengths (km) -> meters. Equivalent to the HTTP summary.length*1000
 		// without maneuver rounding drift.
@@ -344,16 +470,104 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 			tripLeg.Summary.HasHighway,
 			tripLeg.Summary.HasFerry);
 
+		// Preserve the canonical packed GraphId.Value for every directed edge in the exact Thor path
+		// order. Primary and alternate TripLeg instances are mapped independently, so downstream
+		// traffic-control and modifier joins operate on the candidate's real graph identity.
+		IReadOnlyList<ulong> directedEdgeIds = Array.AsReadOnly(
+			tripLeg.Edges.Select(static edge => edge.EdgeId.Value).ToArray());
+		bool liveTrafficApplied = trafficSnapshot is not null
+			&& reader is not null
+			&& HasEngineAppliedTraffic(tripLeg, reader);
+		// The final TripLeg node already contains Thor's traffic-aware elapsed cost. Map it unchanged;
+		// the supplied delay is provenance from a same-path, no-current engine recost and must never
+		// be added here or by downstream ranking.
+
 		return new OsmRouteCandidate(
 			distanceMeters,
 			durationSeconds,
 			encodedShape,
 			routePoints,
 			maneuvers,
-			frictionInputs);
+			frictionInputs)
+		{
+				DirectedEdgeIds = directedEdgeIds,
+				DurationSource = liveTrafficApplied
+					? RouteDurationSource.LiveTraffic
+					: RouteDurationSource.FreeFlow,
+				TrafficSnapshotVersion = trafficSnapshot?.Version,
+				EngineAppliedTrafficDelaySeconds = liveTrafficApplied
+					? engineAppliedTrafficDelaySeconds
+					: 0,
+		};
 	}
 
-	private static OsmRouteManeuver MapManeuver(Maneuver maneuver)
+	private readonly record struct EngineTrafficApplication(bool Applied, int DelaySeconds);
+
+	private static EngineTrafficApplication CalculateEngineAppliedTraffic(
+		TripLeg tripLeg,
+		GraphReader reader,
+		OsmRouteRequest request,
+		TimeInfo timeInfo)
+	{
+		if (tripLeg.Edges.Count == 0
+			|| tripLeg.Nodes.Count == 0
+			|| !HasEngineAppliedTraffic(tripLeg, reader))
+		{
+			return default;
+		}
+
+		DynamicCost noCurrentCosting = BuildCosting(request, includeCurrentTraffic: false);
+		GraphId[] edgeIds = tripLeg.Edges
+			.Select(static edge => edge.EdgeId)
+			.ToArray();
+		var labels = new List<PathEdgeLabel>(edgeIds.Length);
+		int edgeIndex = 0;
+		GraphId NextEdge() => edgeIndex < edgeIds.Length
+			? edgeIds[edgeIndex++]
+			: GraphId.Invalid;
+
+		Recost.Forward(
+			reader,
+			noCurrentCosting,
+			NextEdge,
+			labels.Add,
+			tripLeg.Edges[0].SourceAlongEdge,
+			tripLeg.Edges[^1].TargetAlongEdge,
+			timeInfo,
+			invariant: true,
+			ignoreAccess: true);
+		if (labels.Count != edgeIds.Length)
+		{
+			throw new InvalidOperationException(
+				"Same-path no-current recost did not materialize every routed edge.");
+		}
+
+		int activeDurationSeconds = (int)Math.Round(
+			tripLeg.Nodes[^1].ElapsedCost.Secs,
+			MidpointRounding.AwayFromZero);
+		int noCurrentDurationSeconds = (int)Math.Round(
+			labels[^1].Cost().Secs,
+			MidpointRounding.AwayFromZero);
+		return new EngineTrafficApplication(
+			Applied: true,
+			DelaySeconds: Math.Max(0, activeDurationSeconds - noCurrentDurationSeconds));
+	}
+
+	private static bool HasEngineAppliedTraffic(TripLeg tripLeg, GraphReader reader)
+	{
+		foreach (TripEdge tripEdge in tripLeg.Edges)
+		{
+			GraphTile? tile = reader.GetGraphTile(tripEdge.EdgeId);
+			if (tile?.GetTrafficTile().TrafficSpeed(tripEdge.EdgeId.Id()).SpeedValid() == true)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+		private static OsmRouteManeuver MapManeuver(Maneuver maneuver)
 		=> new(
 			Type: (int)maneuver.Type(),
 			// Odin NarrativeBuilder prose (written turn-by-turn text), produced when the route is built

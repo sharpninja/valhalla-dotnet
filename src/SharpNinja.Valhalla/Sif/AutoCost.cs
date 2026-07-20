@@ -681,6 +681,18 @@ public class AutoCost : DynamicCost
                (allowClosures || !IsClosedForDisallow(edge, tile)) && IsHovAllowed(edge);
     }
 
+    public override bool Allowed(
+        DirectedEdge edge,
+        GraphTilePtr tile,
+        uint directedEdgeIndex,
+        ushort disallowMask = DisallowNone)
+    {
+        bool allowClosures = (!FilterClosures_ && (disallowMask & DisallowClosure) == 0) ||
+                             (FlowMask_ & GraphConstants.CurrentFlowMask) == 0;
+        return base.Allowed(edge, tile, disallowMask) && !edge.BssConnection &&
+               (allowClosures || !tile.IsClosed(directedEdgeIndex)) && IsHovAllowed(edge);
+    }
+
     /// <summary>
     /// PORT-NOTE: the disallow-mask Allowed overload calls C++ <c>tile->IsClosed(edge)</c> directly
     /// (not the closure-aware DynamicCost::IsClosed). In C++ <c>GraphTile::IsClosed(const

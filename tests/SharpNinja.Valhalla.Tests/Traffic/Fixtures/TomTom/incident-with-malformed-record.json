@@ -1,0 +1,30 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-86.7400, 36.1530]
+      },
+      "properties": {
+        "id": "tomtom-valid-incident",
+        "magnitudeOfDelay": 2,
+        "delay": 120,
+        "roadClosed": false,
+        "startTime": "2026-07-18T11:30:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "events": [
+          { "description": "Valid incident" }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "tomtom-malformed-incident",
+        "magnitudeOfDelay": 3,
+        "delay": 300
+      }
+    }
+  ]
+}

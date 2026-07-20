@@ -1,0 +1,22 @@
+{
+  "flowSegmentData": {
+    "id": "tomtom-flow-1",
+    "observedAt": "2026-07-18T11:58:00Z",
+    "updatedAt": "2026-07-18T11:59:00Z",
+    "validFrom": "2026-07-18T11:55:00Z",
+    "validUntil": "2026-07-18T12:15:00Z",
+    "currentSpeed": 35,
+    "freeFlowSpeed": 70,
+    "currentTravelTime": 180,
+    "freeFlowTravelTime": 90,
+    "confidence": 0.91,
+    "roadClosure": false,
+    "coordinates": {
+      "coordinate": [
+        { "latitude": 36.1263, "longitude": -86.6774 },
+        { "latitude": 36.1370, "longitude": -86.7040 },
+        { "latitude": 36.1490, "longitude": -86.7330 }
+      ]
+    }
+  }
+}

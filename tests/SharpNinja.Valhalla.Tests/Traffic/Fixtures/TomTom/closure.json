@@ -1,0 +1,29 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-86.7500, 36.1550],
+          [-86.7600, 36.1580]
+        ]
+      },
+      "properties": {
+        "id": "tomtom-closure-1",
+        "originalId": "TT-CLOSURE-1",
+        "iconCategory": 9,
+        "magnitudeOfDelay": 4,
+        "delay": 900,
+        "roadClosed": true,
+        "observedAt": "2026-07-18T11:40:00Z",
+        "updatedAt": "2026-07-18T11:57:00Z",
+        "startTime": "2026-07-18T11:30:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "events": [
+          { "description": "Road closed for emergency work" }
+        ]
+      }
+    }
+  ]
+}

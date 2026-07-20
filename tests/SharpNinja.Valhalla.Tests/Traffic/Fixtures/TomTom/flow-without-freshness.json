@@ -1,0 +1,16 @@
+{
+  "flowSegmentData": {
+    "id": "tomtom-flow-provenance",
+    "currentSpeed": 45,
+    "freeFlowSpeed": 70,
+    "currentTravelTime": 140,
+    "freeFlowTravelTime": 100,
+    "confidence": 0.91,
+    "coordinates": {
+      "coordinate": [
+        { "latitude": 36.1263, "longitude": -86.6774 },
+        { "latitude": 36.1370, "longitude": -86.7040 }
+      ]
+    }
+  }
+}

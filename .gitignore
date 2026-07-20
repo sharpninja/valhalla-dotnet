@@ -3,6 +3,7 @@ AGENTS-README-FIRST.yaml
 AGENTS-README-FIRST.yaml.deleted-*
 .mcpServer/
 cache/
+todo-bootstrap.marker
 
 # .NET build output
 [Bb]in/

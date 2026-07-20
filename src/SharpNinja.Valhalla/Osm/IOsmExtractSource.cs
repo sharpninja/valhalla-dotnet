@@ -1,12 +1,10 @@
 namespace SharpNinja.Valhalla.Osm;
 
 /// <summary>
-/// OPT-IN, self-contained retrieval seam for the OSM <c>.osm.pbf</c> extract that the on-device
-/// mjolnir tile builder consumes. The single concrete implementation
-/// (<see cref="HttpOsmExtractSource"/>) reads its source URL + data directory from
-/// <see cref="TruckMate.Core.Models.OsmProviderSettings"/>; when no source URL is configured it
-/// performs NO network I/O and returns a not-configured result. Nothing phones home unless the user
-/// explicitly sets a URL.
+/// Host-configured, opt-in retrieval seam for a regional OSM <c>.osm.pbf</c> extract consumed by
+/// the Mjolnir tile builder. Implementations own endpoint and cache configuration and must perform
+/// no network I/O when no source is configured. Nothing phones home unless the host explicitly
+/// supplies a source.
 /// </summary>
 /// <remarks>
 /// The ported <c>PbfGraphParser</c> / <see cref="SharpNinja.Valhalla.Mjolnir.TileBuilder"/>

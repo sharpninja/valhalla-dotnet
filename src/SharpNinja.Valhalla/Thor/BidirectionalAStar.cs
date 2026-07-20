@@ -21,12 +21,12 @@
 //     PathEdges) instead of the proto valhalla::Location. The proto correlation().edges() reads map
 //     onto PathLocation.Edges; PathEdge.percent_along/ll/distance/begin_node/end_node map to the
 //     ported PathLocation.PathEdge members. find_percent_along walks PathLocation.Edges.
-//   - TimeInfo::make + EstimateReverseStartTime depend on baldr::DateTime + the timezone database,
-//     which are a later port slice. For the supported point-to-point (no date_time) case the engine's
-//     TimeInfo::make yields TimeInfo::invalid(); we reproduce that (both directions get
-//     TimeInfo.Invalid()). If a date/time IS requested we throw NotImplementedException rather than
-//     silently producing a time-independent route (mirrors DynamicCost.IsConditionalActive's
-//     missing-dependency policy). recost_forward (sif/recost.h) is likewise a later slice; FormPath
+//   - Host-supplied invariant TimeInfo is honored by both search directions for live-traffic lookup.
+//     Full Valhalla date_time parsing, local-time conversion, EstimateReverseStartTime, and timezone
+//     database behavior remain a later port slice. A request that uses those unsupported date/time
+//     fields throws NotImplementedException rather than silently producing a time-independent route
+//     (mirrors DynamicCost.IsConditionalActive's missing-dependency policy). recost_forward
+//     (sif/recost.h) is likewise a later slice; FormPath
 //     reconstructs the path edges + per-edge labels directly from the settled edge labels (the costs
 //     already computed during expansion), which is sufficient to consume a route. The alternates
 //     viability filters (alternates.h: filter/validate_alternate_*) are ported in Alternates.cs and
@@ -727,9 +727,10 @@ public sealed class BidirectionalAStar : PathAlgorithm
         bool arriveBy = options.DateTimeType == DateTimeType.ArriveBy;
 
         // Get time information for forward and backward searches.
-        // PORT-NOTE: TimeInfo::make + EstimateReverseStartTime depend on the (later-slice) baldr
-        // DateTime + timezone DB. For the supported no-date-time case TimeInfo::make yields
-        // invalid(); reproduce that. Any actual date/time request is not yet supported.
+        // PORT-NOTE: A host may supply one invariant UTC TimeInfo for both search directions so
+        // current live-traffic slots are stable for the route. Valhalla date_time parsing, timezone
+        // conversion, and EstimateReverseStartTime remain unsupported until the baldr DateTime and
+        // timezone-database slice is ported. Requests using those date/time fields fail explicitly.
         if (options.HasDateTimeType && options.DateTimeType != DateTimeType.NoTime &&
             (!string.IsNullOrEmpty(origin.DateTime) || !string.IsNullOrEmpty(destination.DateTime)))
         {
@@ -737,8 +738,8 @@ public sealed class BidirectionalAStar : PathAlgorithm
                 "Time-dependent bidirectional A* needs baldr::DateTime + the timezone database (later port slice).");
         }
 
-        TimeInfo forwardTimeInfo = TimeInfo.Invalid();
-        TimeInfo reverseTimeInfo = TimeInfo.Invalid();
+        TimeInfo forwardTimeInfo = origin.TimeInfo ?? TimeInfo.Invalid();
+        TimeInfo reverseTimeInfo = destination.TimeInfo ?? forwardTimeInfo;
 
         // Set origin and destination locations - seeds the adj. lists.
         SetOrigin(graphreader, origin, forwardTimeInfo);
@@ -1492,18 +1493,9 @@ public sealed class BidirectionalAStar : PathAlgorithm
             // TODO: actually we should not ignore access restrictions: if the reverse path traversed a
             //   closed edge due to time restrictions, we could do a mini traversal to circumvent the
             //   closed edge(s).
-            try
-            {
-                bool invariant = options.DateTimeType == DateTimeType.Invariant;
-                Recost.Forward(graphreader, _costing, EdgeCb, LabelCb, sourcePct, targetPct, timeInfo,
-                    invariant, true);
-            }
-            catch (Exception)
-            {
-                // Bi-directional A* failed to recost this candidate's final path; skip it (continue)
-                // instead of aborting the whole route.
-                continue;
-            }
+            bool invariant = options.DateTimeType == DateTimeType.Invariant;
+            Recost.Forward(graphreader, _costing, EdgeCb, LabelCb, sourcePct, targetPct, timeInfo,
+                invariant, true);
 
             // For the first path just add it; subsequent paths only if they pass the viability tests.
             // Faithful port of the alternates accept-predicate (alternates.h). sharedEdgeIds is carried

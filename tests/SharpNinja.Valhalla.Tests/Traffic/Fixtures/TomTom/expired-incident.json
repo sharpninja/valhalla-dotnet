@@ -1,0 +1,22 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-86.7400, 36.1530]
+      },
+      "properties": {
+        "id": "tomtom-expired-incident",
+        "magnitudeOfDelay": 1,
+        "delay": 60,
+        "roadClosed": false,
+        "startTime": "2026-07-18T09:00:00Z",
+        "endTime": "2026-07-18T11:59:59Z",
+        "events": [
+          { "description": "Expired incident" }
+        ]
+      }
+    }
+  ]
+}

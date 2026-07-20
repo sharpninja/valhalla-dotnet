@@ -1,0 +1,27 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "location": {
+        "shape": {
+          "links": [
+            {
+              "points": [
+                { "lat": 36.1530, "lng": -86.7400 }
+              ]
+            }
+          ]
+        }
+      },
+      "incidentDetails": {
+        "id": "here-expired-incident",
+        "criticality": "minor",
+        "roadClosed": false,
+        "delay": 60,
+        "startTime": "2026-07-18T09:00:00Z",
+        "endTime": "2026-07-18T11:59:59Z",
+        "description": { "value": "Expired incident" }
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "location": {
+        "shape": {
+          "links": [
+            {
+              "points": [
+                { "lat": 36.1400, "lng": -86.7200 },
+                { "lat": 36.1450, "lng": -86.7250 }
+              ]
+            }
+          ]
+        }
+      },
+      "incidentDetails": {
+        "id": "here-restriction-1",
+        "originalId": "HERE-RESTRICTION-1",
+        "type": "vehicleRestriction",
+        "criticality": "minor",
+        "roadClosed": false,
+        "startTime": "2026-07-18T11:00:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "description": { "value": "Vehicles over 12 feet prohibited" }
+      }
+    }
+  ]
+}

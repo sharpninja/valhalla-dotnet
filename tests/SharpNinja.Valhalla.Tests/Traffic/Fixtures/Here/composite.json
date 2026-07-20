@@ -1,0 +1,48 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "id": "here-composite-flow",
+      "location": {
+        "shape": { "links": [ { "points": [
+          { "lat": 36.1263, "lng": -86.6774 },
+          { "lat": 36.1370, "lng": -86.7040 }
+        ] } ] }
+      },
+      "currentFlow": {
+        "speed": 55,
+        "freeFlow": 70,
+        "traversalTime": 140,
+        "freeFlowTravelTime": 110,
+        "confidence": 0.9
+      }
+    },
+    {
+      "location": { "lat": 36.1350, "lng": -86.7100 },
+      "incidentDetails": {
+        "id": "here-composite-incident",
+        "type": "disabledVehicle",
+        "criticality": "moderate",
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    },
+    {
+      "location": { "lat": 36.1380, "lng": -86.7150 },
+      "incidentDetails": {
+        "id": "here-composite-closure",
+        "type": "roadClosure",
+        "roadClosed": true,
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    },
+    {
+      "location": { "lat": 36.1400, "lng": -86.7200 },
+      "incidentDetails": {
+        "id": "here-composite-restriction",
+        "type": "vehicleRestriction",
+        "criticality": "minor",
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    }
+  ]
+}

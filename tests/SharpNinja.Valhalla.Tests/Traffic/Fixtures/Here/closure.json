@@ -1,0 +1,32 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "location": {
+        "shape": {
+          "links": [
+            {
+              "points": [
+                { "lat": 36.1550, "lng": -86.7500 },
+                { "lat": 36.1580, "lng": -86.7600 }
+              ]
+            }
+          ]
+        }
+      },
+      "incidentDetails": {
+        "id": "here-closure-1",
+        "originalId": "HERE-CLOSURE-1",
+        "type": "roadClosure",
+        "criticality": "critical",
+        "roadClosed": true,
+        "delay": 900,
+        "entryTime": "2026-07-18T11:40:00Z",
+        "lastUpdatedTime": "2026-07-18T11:57:00Z",
+        "startTime": "2026-07-18T11:30:00Z",
+        "endTime": "2026-07-18T14:00:00Z",
+        "description": { "value": "Road closed for emergency work" }
+      }
+    }
+  ]
+}

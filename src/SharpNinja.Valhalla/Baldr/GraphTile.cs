@@ -377,7 +377,7 @@ public sealed class GraphTile : IGraphTilePtr
         if (File.Exists(gzLocation))
         {
             byte[] compressed = File.ReadAllBytes(gzLocation);
-            return DecompressTile(graphid, compressed);
+            return DecompressTile(graphid, compressed, trafficMemory);
         }
 
         return null;
@@ -387,7 +387,7 @@ public sealed class GraphTile : IGraphTilePtr
     /// Decompresses gzip tile bytes into a tile. Faithful port of <c>GraphTile::DecompressTile</c>.
     /// Returns <c>null</c> if the bytes cannot be gunzipped.
     /// </summary>
-    public static GraphTile? DecompressTile(GraphId graphid, byte[] compressed)
+    public static GraphTile? DecompressTile(GraphId graphid, byte[] compressed, GraphMemory? trafficMemory = null)
     {
         // Drive the (already ported) inflate callbacks exactly as the C++ DecompressTile does:
         // src_func presents the whole compressed buffer; dst_func grows the output buffer by
@@ -430,7 +430,7 @@ public sealed class GraphTile : IGraphTilePtr
             return null;
         }
 
-        return new GraphTile(graphid, new VectorGraphMemory(data), null);
+        return new GraphTile(graphid, new VectorGraphMemory(data), trafficMemory);
     }
 
     // ------------------------------------------------------------------

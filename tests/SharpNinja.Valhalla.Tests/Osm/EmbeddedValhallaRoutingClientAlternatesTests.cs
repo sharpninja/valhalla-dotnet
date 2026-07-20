@@ -133,10 +133,24 @@ public sealed class EmbeddedValhallaRoutingClientAlternatesTests
         Assert.NotNull(multi);
         Assert.True(multi!.Routes.Count > 1, "expected more than one candidate");
 
-        // Distinct polylines, each a real route with maneuvers.
+        // Distinct polylines, each a real route with maneuvers and the ordered canonical graph
+        // identities from the exact Thor TripLeg used to build that candidate.
         var polylines = multi.Routes.Select(r => r.EncodedPolyline).ToList();
         Assert.Equal(polylines.Count, polylines.Distinct().Count());
-        Assert.All(multi.Routes, r => Assert.NotEmpty(r.Maneuvers));
+        Assert.All(multi.Routes, route =>
+        {
+            Assert.NotEmpty(route.Maneuvers);
+            Assert.NotNull(route.DirectedEdgeIds);
+            Assert.NotEmpty(route.DirectedEdgeIds);
+            Assert.DoesNotContain(GraphId.InvalidGraphId, route.DirectedEdgeIds);
+        });
+
+        var directedEdgeSequences = multi.Routes
+            .Select(route => string.Join(",", route.DirectedEdgeIds!))
+            .ToList();
+        Assert.Equal(
+            directedEdgeSequences.Count,
+            directedEdgeSequences.Distinct(StringComparer.Ordinal).Count());
 
         // Note: the engine orders alternates by COST (turn/toll penalties included), which the DTO does
         // not surface (only DurationSeconds / DistanceMeters). Duration is therefore not asserted to be

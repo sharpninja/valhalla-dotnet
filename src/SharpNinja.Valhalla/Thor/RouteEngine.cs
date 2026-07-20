@@ -330,7 +330,7 @@ public sealed class RouteEngine
         {
             int originIdx = destinationIdx - 1;
             if (!RouteTwoLocations(correlated, originIdx, destinationIdx, costing, modeCosting, mode,
-                                   path, ref last_edge, algorithms))
+                                   options, path, ref last_edge, algorithms))
             {
                 // If routing failed because an intermediate waypoint snapped to a low-reachability road
                 // (small connectivity component) leave only high-reachability candidates and retry once.
@@ -378,6 +378,7 @@ public sealed class RouteEngine
         DynamicCost costing,
         ModeCosting modeCosting,
         TravelMode mode,
+        Options? options,
         List<PathInfo> path,
         ref GraphId last_edge,
         List<string> algorithms)
@@ -399,10 +400,11 @@ public sealed class RouteEngine
         }
 
         // Get best path and keep it. This is the LEG axis: only the PRIMARY path is stitched per pair.
-        // GetPath is called without alternates options (default null), so it returns a single path; even
-        // if an algorithm ever returned more, only tempPaths[0] is used - alternates (the route axis)
-        // never leak into the leg accumulator. See DepartAt's two-axis note.
-        List<List<PathInfo>> tempPaths = GetPath(pathAlgorithm, origin, destination, costing, modeCosting, mode);
+        // The request options are propagated for invariant traffic time and other search semantics;
+        // only tempPaths[0] is used, so alternates (the route axis) never leak into the leg accumulator.
+        // See DepartAt's two-axis note.
+        List<List<PathInfo>> tempPaths = GetPath(
+            pathAlgorithm, origin, destination, costing, modeCosting, mode, options);
         if (tempPaths.Count == 0 || tempPaths[0].Count == 0)
         {
             return false;

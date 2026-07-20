@@ -1,0 +1,22 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "id": "here-reversible-closed",
+      "location": {
+        "shape": { "links": [ { "points": [
+          { "lat": 36.1263, "lng": -86.6774 },
+          { "lat": 36.1370, "lng": -86.7040 }
+        ] } ] }
+      },
+      "currentFlow": {
+        "speed": 0,
+        "freeFlow": 70,
+        "traversalTime": 0,
+        "freeFlowTravelTime": 90,
+        "traversability": "reversibleNotRoutable",
+        "confidence": 0.98
+      }
+    }
+  ]
+}

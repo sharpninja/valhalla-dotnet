@@ -1,0 +1,47 @@
+{
+  "flowSegmentData": {
+    "id": "tomtom-composite-flow",
+    "currentSpeed": 55,
+    "freeFlowSpeed": 70,
+    "currentTravelTime": 140,
+    "freeFlowTravelTime": 110,
+    "confidence": 0.9,
+    "coordinates": {
+      "coordinate": [
+        { "latitude": 36.1263, "longitude": -86.6774 },
+        { "latitude": 36.1370, "longitude": -86.7040 }
+      ]
+    }
+  },
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-86.7100, 36.1350] },
+      "properties": {
+        "id": "tomtom-composite-incident",
+        "eventKind": "incident",
+        "magnitudeOfDelay": 2,
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-86.7150, 36.1380] },
+      "properties": {
+        "id": "tomtom-composite-closure",
+        "eventKind": "roadClosure",
+        "roadClosed": true,
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-86.7200, 36.1400] },
+      "properties": {
+        "id": "tomtom-composite-restriction",
+        "eventKind": "vehicleRestriction",
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    }
+  ]
+}

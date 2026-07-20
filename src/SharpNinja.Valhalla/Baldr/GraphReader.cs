@@ -15,8 +15,8 @@
 //     the local tile_dir (uncompressed .gph then gzipped .gph.gz), exactly the C++ disk path.
 //   - The mmap'd tar `tile_extract_` path is NOT ported (it relies on midgard::tar + mmap, which is
 //     part of the excluded I/O surface). Tiles always come from the tile_dir.
-//   - Live-traffic tile_extract (traffic_tiles / TarballGraphMemory) is NOT ported (same mmap/tar
-//     surface). Traffic memory is therefore always null here.
+//   - Live-traffic tar/mmap extraction is not ported. Runtime traffic instead comes from one
+//     immutable content-addressed generation pinned by an optional ITrafficSnapshotLease.
 //   - Incidents (incident_singleton_t / GetIncidentTile / GetIncidents / IncidentResult) are NOT
 //     ported (transit-adjacent, excluded I/O).
 //   - connectivity_map_t and shortcut_recovery_t (GetShortcut/RecoverShortcut depend on the latter)
@@ -32,6 +32,7 @@ using System.Collections.Generic;
 using System.IO;
 
 using SharpNinja.Valhalla.Midgard;
+using SharpNinja.Valhalla.Traffic.Tiles;
 
 namespace SharpNinja.Valhalla.Baldr;
 
@@ -563,11 +564,15 @@ public class GraphReader
 
         /// <summary>Max concurrent reader users (C++ <c>max_concurrent_reader_users</c>).</summary>
         public long MaxConcurrentReaderUsers { get; init; } = 1;
+
+        /// <summary>Pinned immutable traffic generation used for every tile loaded by this reader.</summary>
+        public ITrafficSnapshotLease? TrafficSnapshot { get; init; }
     }
 
     private readonly string _tileDir;
     private readonly long _maxConcurrentUsers;
     private readonly ITileCache _cache;
+    private readonly ITrafficSnapshotLease? _trafficSnapshot;
 
     /// <summary>
     /// Constructor using tiles as separate files. Faithful port of the C++ ctor (local-directory
@@ -578,6 +583,7 @@ public class GraphReader
         _tileDir = pt.TileDir;
         _maxConcurrentUsers = pt.MaxConcurrentReaderUsers;
         _cache = cache ?? TileCacheFactory.CreateTileCache(pt);
+        _trafficSnapshot = pt.TrafficSnapshot;
 
         // Reserve cache based on the average disk tile size.
         _cache.Reserve(AverageTileSize);
@@ -647,15 +653,31 @@ public class GraphReader
             return cached;
         }
 
-        // PORT-NOTE: the mmap'd tar extract path and the traffic_tiles lookup are excluded; we go
-        // straight to the on-disk tile_dir, exactly like the C++ disk path.
+        // PORT-NOTE: the mmap'd graph/traffic tar paths remain excluded. Graph bytes come from the
+        // on-disk tile_dir, while traffic bytes come only from this reader's pinned immutable lease.
 
-        // Try to get it from tile_dir.
-        GraphTile? tile = GraphTile.Create(_tileDir, @base, null);
+        // Load the graph tile with traffic from the one generation pinned by this reader.
+        GraphMemory? trafficMemory = _trafficSnapshot?.OpenTrafficMemory(@base);
+        GraphTile? tile = GraphTile.Create(_tileDir, @base, trafficMemory);
         if (tile is null)
         {
             // PORT-NOTE: the URL/tile_getter fallback is excluded; a missing disk tile is a miss.
             return null;
+        }
+
+        if (trafficMemory is not null)
+        {
+            TrafficTileHeader? trafficHeader = tile.GetTrafficTile().Header;
+            long expectedLength = checked(
+                TrafficTile.HeaderSize + ((long)tile.DirectedEdgeCount() * TrafficTile.SpeedSize));
+            if (trafficHeader is null
+                || trafficHeader.Value.TileId != @base.Value
+                || trafficHeader.Value.DirectedEdgeCount != tile.DirectedEdgeCount()
+                || trafficHeader.Value.TrafficTileVersion != TrafficTileConstants.TrafficTileVersion
+                || trafficMemory.Size != expectedLength)
+            {
+                throw new InvalidDataException("Pinned traffic tile does not match the graph tile.");
+            }
         }
 
         // Keep a copy in the cache and return it.

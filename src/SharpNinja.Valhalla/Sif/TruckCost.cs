@@ -684,7 +684,7 @@ public class TruckCost : DynamicCost
     /// PORT-NOTE: the index-based ported tile needs the directed-edge index for <c>IsClosed</c>; the
     /// caller supplies it via <paramref name="deIndex"/> (the C++ derives it from the edge pointer).
     /// </remarks>
-    public bool Allowed(DirectedEdge edge, GraphTilePtr tile, uint deIndex, ushort disallowMask = DisallowNone)
+    public override bool Allowed(DirectedEdge edge, GraphTilePtr tile, uint deIndex, ushort disallowMask = DisallowNone)
     {
         bool allowClosures = (!FilterClosures_ && (disallowMask & DisallowClosure) == 0) ||
                              (FlowMask_ & GraphConstants.CurrentFlowMask) == 0;

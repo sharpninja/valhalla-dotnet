@@ -1,0 +1,15 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-86.73, 36.15] },
+      "properties": {
+        "id": "tomtom-last-report",
+        "iconCategory": 2,
+        "magnitudeOfDelay": 1,
+        "lastReportTime": "2026-07-18T11:58:45Z",
+        "endTime": "2026-07-18T13:00:00Z"
+      }
+    }
+  ]
+}

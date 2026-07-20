@@ -1,0 +1,26 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-86.7200, 36.1400],
+          [-86.7250, 36.1450]
+        ]
+      },
+      "properties": {
+        "id": "tomtom-restriction-1",
+        "originalId": "TT-RESTRICTION-1",
+        "eventKind": "vehicleRestriction",
+        "magnitudeOfDelay": 1,
+        "roadClosed": false,
+        "startTime": "2026-07-18T11:00:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "events": [
+          { "description": "Vehicles over 12 feet prohibited" }
+        ]
+      }
+    }
+  ]
+}

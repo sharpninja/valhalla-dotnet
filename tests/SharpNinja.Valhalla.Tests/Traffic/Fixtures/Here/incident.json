@@ -1,0 +1,32 @@
+{
+  "sourceUpdated": "2026-07-18T11:59:00Z",
+  "results": [
+    {
+      "location": {
+        "shape": {
+          "links": [
+            {
+              "points": [
+                { "lat": 36.1500, "lng": -86.7300 },
+                { "lat": 36.1530, "lng": -86.7400 }
+              ]
+            }
+          ]
+        }
+      },
+      "incidentDetails": {
+        "id": "here-incident-1",
+        "originalId": "HERE-ORIGINAL-1",
+        "type": "disabledVehicle",
+        "criticality": "major",
+        "roadClosed": false,
+        "delay": 300,
+        "entryTime": "2026-07-18T11:50:00Z",
+        "lastUpdatedTime": "2026-07-18T11:58:30Z",
+        "startTime": "2026-07-18T11:45:00Z",
+        "endTime": "2026-07-18T13:00:00Z",
+        "description": { "value": "Disabled vehicle on shoulder" }
+      }
+    }
+  ]
+}

@@ -9,9 +9,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageId>SharpNinja.Valhalla</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.3.0</Version>
     <Authors>SharpNinja</Authors>
-    <Description>Embedded, in-process C# port of the Valhalla OSM routing engine (Baldr graph reader, Sif costing, Thor route engine, Odin directions, Mjolnir tile builder) with a provider-neutral routing client. Consumes local Valhalla tiles; no external routing server. 1.1.0 adds en-US maneuver narrative prose and bidirectional alternate routes.</Description>
+    <Description>Embedded, in-process C# port of the Valhalla OSM routing engine with provider-neutral routing, traffic and closure feed normalization, route-modifier analysis, and Valhalla traffic edge/tile integration.</Description>
     <PackageTags>valhalla;osm;routing;navigation;maps;offline</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>

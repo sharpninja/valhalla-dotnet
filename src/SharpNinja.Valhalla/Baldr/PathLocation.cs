@@ -159,6 +159,7 @@ public sealed class PathLocation : Location
         Name = location.Name;
         Street = location.Street;
         DateTime = location.DateTime;
+        TimeInfo = location.TimeInfo;
     }
 
     /// <summary>

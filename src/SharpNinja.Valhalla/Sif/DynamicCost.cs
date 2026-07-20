@@ -497,6 +497,17 @@ public abstract class DynamicCost
                (edge.Use != Use.Construction || IgnoreConstruction_);
     }
 
+    /// <summary>
+    /// Index-carrying location-search overload used when the port must inspect per-edge traffic
+    /// state. Costings that do not need the index retain the source-compatible overload above.
+    /// </summary>
+    public virtual bool Allowed(
+        DirectedEdge edge,
+        GraphTilePtr tile,
+        uint directedEdgeIndex,
+        ushort disallowMask = DisallowNone) =>
+        Allowed(edge, tile, disallowMask);
+
     /// <summary>Checks if access is allowed for the provided edge (mode-based forward access).</summary>
     public virtual bool IsAccessible(DirectedEdge edge)
         => (edge.ForwardAccess & AccessMask_) != 0 ||
@@ -1115,7 +1126,7 @@ public abstract class DynamicCost
         float start,
         float end)
     {
-        return EdgeCost(edge, new GraphId(GraphId.InvalidGraphId), tile, timeInfo, ref flowSources) *
+        return EdgeCost(edge, edgeid, tile, timeInfo, ref flowSources) *
                Math.Max(end - start, float.Epsilon) *
                (float)PartialEdgeFactor(edgeid, start, end);
     }
@@ -1125,7 +1136,7 @@ public abstract class DynamicCost
     /// </summary>
     public Cost PartialEdgeCost(DirectedEdge edge, GraphId edgeid, GraphTilePtr tile, float start, float end)
     {
-        return EdgeCost(edge, new GraphId(GraphId.InvalidGraphId), tile) *
+        return EdgeCost(edge, edgeid, tile) *
                Math.Max(end - start, float.Epsilon) *
                (float)PartialEdgeFactor(edgeid, start, end);
     }

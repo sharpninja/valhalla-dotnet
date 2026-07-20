@@ -98,7 +98,7 @@ public static class Recost
         }
 
         // fail if the first edge is filtered
-        if (!ignoreAccess && !costing.Allowed(edge.Value, tile!))
+        if (!ignoreAccess && !costing.Allowed(edge.Value, tile!, edgeId.Id()))
         {
             throw new InvalidOperationException(
                 "This path requires different edge access than this costing allows");
@@ -191,7 +191,7 @@ public static class Recost
                 : new Cost();
             // update the cost to the end of this edge
             byte flowSources = 0;
-            cost += transitionCost + costing.PartialEdgeCost(edge.Value, new GraphId(GraphId.InvalidGraphId),
+            cost += transitionCost + costing.PartialEdgeCost(edge.Value, edgeId,
                                                              tile!, offsetTime, ref flowSources, start, end);
             // update the length to the end of this edge
             length += edge.Value.Length * edgePct;
