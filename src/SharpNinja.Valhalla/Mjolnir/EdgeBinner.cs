@@ -248,7 +248,8 @@ internal static class EdgeBinner
             Directory.CreateDirectory(dir);
         }
 
-        File.WriteAllBytes(path, blob);
+        GraphTileChecksum.RefreshTileHash(blob);
+        GraphTileChecksum.WriteTileAtomically(path, blob);
     }
 
     /// <summary>

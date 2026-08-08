@@ -43,12 +43,78 @@ public static class GraphTileChecksum
                 accumulator + (checksum & GraphTileHeader.TileHashMask));
         }
 
-        return unchecked(
+        return FoldTilesetHashAccumulator(accumulator);
+    }
+
+    private static ushort FoldTilesetHashAccumulator(ulong accumulator)
+        => unchecked(
             (ushort)(
                 accumulator ^
                 (accumulator >> 16) ^
                 (accumulator >> 32) ^
                 (accumulator >> 48)));
+
+    /// <summary>
+    /// Recomputes and stamps the low 48-bit hash for a mutated tile while preserving its current
+    /// tileset build ID until the complete tileset can be restamped.
+    /// </summary>
+    public static ulong RefreshTileHash(byte[] tile)
+    {
+        ArgumentNullException.ThrowIfNull(tile);
+        if (tile.Length < GraphTileHeader.HeaderSize)
+        {
+            throw new ArgumentException(
+                $"Tile must contain at least {GraphTileHeader.HeaderSize} bytes.",
+                nameof(tile));
+        }
+
+        GraphTileHeader header = GraphTileHeader.FromBytes(tile);
+        if (header.EndOffset() != tile.Length)
+        {
+            throw new InvalidDataException(
+                $"Tile end offset {header.EndOffset()} does not match byte length {tile.Length}.");
+        }
+
+        ulong tileHash = ComputeTileHash(tile.AsSpan(GraphTileHeader.HeaderSize));
+        ulong buildIdBits = (ulong)header.BuildId() << GraphTileHeader.TileHashBits;
+        header.SetRawChecksum(buildIdBits | tileHash);
+        header.AsSpan().CopyTo(tile);
+        return tileHash;
+    }
+
+    /// <summary>
+    /// Recomputes every tile hash and stamps one shared build ID using bounded two-pass I/O.
+    /// Each tile is validated and atomically replaced without retaining the complete tileset.
+    /// </summary>
+    public static ushort RefreshTilesetFiles(string tileDirectory)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(tileDirectory);
+
+        string[] tilePaths =
+            Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
+        Array.Sort(tilePaths, StringComparer.Ordinal);
+
+        ulong accumulator = 0;
+        foreach (string tilePath in tilePaths)
+        {
+            byte[] tile = File.ReadAllBytes(tilePath);
+            ulong tileHash = RefreshTileHash(tile);
+            accumulator = unchecked(accumulator + tileHash);
+            WriteTileAtomically(tilePath, tile);
+        }
+
+        ushort buildId = FoldTilesetHashAccumulator(accumulator);
+        ulong buildIdBits = (ulong)buildId << GraphTileHeader.TileHashBits;
+        foreach (string tilePath in tilePaths)
+        {
+            byte[] tile = File.ReadAllBytes(tilePath);
+            GraphTileHeader header = GraphTileHeader.FromBytes(tile);
+            header.SetRawChecksum(buildIdBits | header.TileChecksum());
+            header.AsSpan().CopyTo(tile);
+            WriteTileAtomically(tilePath, tile);
+        }
+
+        return buildId;
     }
 
     /// <summary>
@@ -89,5 +155,22 @@ public static class GraphTileChecksum
         }
 
         return buildId;
+    }
+
+    internal static void WriteTileAtomically(string path, byte[] tile)
+    {
+        string temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllBytes(temporaryPath, tile);
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
     }
 }

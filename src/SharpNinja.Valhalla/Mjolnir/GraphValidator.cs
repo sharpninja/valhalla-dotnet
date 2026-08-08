@@ -172,6 +172,7 @@ public static class GraphValidator
             EdgeBinner.AddBins(tileDir, tile, tw.Value);
         }
 
+        GraphTileChecksum.RefreshTilesetFiles(tileDir);
         return stats;
     }
 
