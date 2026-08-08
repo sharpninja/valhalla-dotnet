@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "release": "3.8.3",
+    "sourceCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+    "image": "ghcr.io/valhalla/valhalla:3.8.3",
+    "imageDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f"
+  },
+  "input": {
+    "path": "artifacts/monaco.osm.pbf",
+    "sha256": "D61B6F77711ADC99C4A59BA369B6C9B306C2BEFCC19E3F2C11D39BCFF8DA8176"
+  },
+  "build": {
+    "network": "none",
+    "cpuLimit": 4,
+    "memoryLimitBytes": 2147483648,
+    "hierarchy": true,
+    "shortcuts": true,
+    "adminDatabase": null,
+    "timeZoneDatabase": null,
+    "command": "valhalla_build_tiles -c /work/valhalla.json /input/monaco.osm.pbf"
+  },
+  "files": [
+    {
+      "path": "tiles/0/003/016.gph",
+      "length": 39688,
+      "sha256": "DAD827738A5B9F181A0650B0466405E5D94DA8108924C0E6BF8379AC03DE0460"
+    },
+    {
+      "path": "tiles/1/048/067.gph",
+      "length": 132024,
+      "sha256": "930262E68AAA6CC30606BCD13D529C1B7574A7A1448070187106D4476A27D657"
+    },
+    {
+      "path": "tiles/2/000/769/709.gph",
+      "length": 922104,
+      "sha256": "FF7B0D40F633CC7AC8E724291D402547AA838C2E3C1A7E9395E5507096D20BC2"
+    },
+    {
+      "path": "tiles/2/000/771/149.gph",
+      "length": 15744,
+      "sha256": "A218F1B94347575777F49CB9346F2C7C09AB64F8249F4BCAA98706ADA1797C9C"
+    }
+  ]
+}
