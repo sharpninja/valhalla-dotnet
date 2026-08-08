@@ -203,6 +203,25 @@ public sealed record OfficialValhallaTileSetReadReceipt(
     string SafeDiagnostics);
 
 /// <summary>
+/// Defines one bounded one-shot action executed by the pinned stock Valhalla service.
+/// </summary>
+public sealed record OfficialValhallaActionRequest(
+    string Action,
+    string RequestJson);
+
+/// <summary>
+/// Records the bounded output of one pinned stock Valhalla service action.
+/// </summary>
+public sealed record OfficialValhallaActionReceipt(
+    string ReaderVersion,
+    string Action,
+    int ExitCode,
+    ReadOnlyMemory<byte> Response,
+    long ResponseBytes,
+    string ResponseSha256,
+    string SafeDiagnostics);
+
+/// <summary>
 /// Uses pinned stock Valhalla executables to prove official-reader compatibility with a
 /// managed tile set.
 /// </summary>
@@ -361,6 +380,228 @@ public sealed class OfficialValhallaContainerTileSetReader
             {
                 Directory.Delete(configurationDirectory, recursive: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// Executes one or more bounded stock Valhalla actions against one immutable tile directory.
+    /// Image inspection, version verification, and service configuration are performed once.
+    /// </summary>
+    public async ValueTask<IReadOnlyList<OfficialValhallaActionReceipt>> ExecuteActionsAsync(
+        string tileDirectory,
+        IReadOnlyList<OfficialValhallaActionRequest> requests,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tileDirectory);
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count is < 1 or > 128)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(requests),
+                "An official qualification batch must contain between 1 and 128 actions.");
+        }
+
+        string fullDirectory = Path.GetFullPath(tileDirectory);
+        if (!Directory.Exists(fullDirectory))
+        {
+            throw new DirectoryNotFoundException("The Valhalla tile directory was not found.");
+        }
+
+        if (!Directory.EnumerateFiles(
+                fullDirectory,
+                $"*{GraphTile.SuffixNonCompressed}",
+                SearchOption.AllDirectories).Any())
+        {
+            throw new InvalidDataException("The Valhalla tile directory contains no graph tiles.");
+        }
+
+        foreach (OfficialValhallaActionRequest request in requests)
+        {
+            ValidateActionRequest(request);
+        }
+
+        ProcessReceipt inspection = await RunDockerAsync(
+                ["image", "inspect", _options.ImageReference],
+                maximumStandardOutputBytes: 256 * 1024,
+                retainStandardOutput: false,
+                containerName: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+        EnsureSuccess(inspection, fullDirectory, "The pinned official Valhalla image is unavailable.");
+
+        string versionContainer = CreateContainerName("action-version");
+        ProcessReceipt version = await RunDockerAsync(
+                CreateContainerArguments(
+                    "valhalla_service",
+                    ["--version"],
+                    versionContainer),
+                maximumStandardOutputBytes: 64 * 1024,
+                retainStandardOutput: true,
+                versionContainer,
+                cancellationToken)
+            .ConfigureAwait(false);
+        EnsureSuccess(version, fullDirectory, "The official Valhalla action version probe failed.");
+
+        string versionText = Encoding.UTF8.GetString(version.StandardOutput.Bytes);
+        Match versionMatch = VersionPattern.Match(versionText);
+        if (!versionMatch.Success)
+        {
+            throw new InvalidDataException("The official Valhalla action returned an unrecognized version.");
+        }
+
+        string configurationContainer = CreateContainerName("action-config");
+        ProcessReceipt configuration = await RunDockerAsync(
+                CreateContainerArguments(
+                    "valhalla_build_config",
+                    [
+                        "--logging-type",
+                        "std_err",
+                        "--logging-color",
+                        "false",
+                        "--mjolnir-tile-dir",
+                        "/tiles",
+                        "--mjolnir-tile-extract",
+                        string.Empty,
+                        "--mjolnir-admin",
+                        "/disabled/admin.sqlite",
+                        "--mjolnir-timezone",
+                        "/disabled/timezones.sqlite",
+                        "--mjolnir-data-processing-use-admin-db",
+                        "false",
+                    ],
+                    configurationContainer),
+                MaximumConfigurationBytes,
+                retainStandardOutput: true,
+                configurationContainer,
+                cancellationToken)
+            .ConfigureAwait(false);
+        EnsureSuccess(
+            configuration,
+            fullDirectory,
+            "The official Valhalla action configuration builder failed.");
+
+        byte[] serviceConfiguration = PrepareConfiguration(configuration.StandardOutput.Bytes);
+        string configurationDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"valhalla-official-actions-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configurationDirectory);
+        string configurationPath = Path.Combine(configurationDirectory, "valhalla.json");
+
+        try
+        {
+            await File.WriteAllBytesAsync(
+                    configurationPath,
+                    serviceConfiguration,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            List<OfficialValhallaActionReceipt> receipts = new(requests.Count);
+            foreach (OfficialValhallaActionRequest request in requests)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string actionContainer = CreateContainerName(request.Action);
+                ProcessReceipt action = await RunDockerAsync(
+                        CreateContainerArguments(
+                            "valhalla_service",
+                            [
+                                "/qualification/valhalla.json",
+                                request.Action,
+                                request.RequestJson,
+                            ],
+                            actionContainer,
+                            fullDirectory,
+                            configurationDirectory),
+                        _options.MaximumOutputBytes,
+                        retainStandardOutput: true,
+                        actionContainer,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                receipts.Add(
+                    new OfficialValhallaActionReceipt(
+                        versionMatch.Groups["version"].Value,
+                        request.Action,
+                        action.ExitCode,
+                        action.StandardOutput.Bytes,
+                        action.StandardOutput.Length,
+                        action.StandardOutput.Sha256,
+                        RedactDiagnostics(
+                            Encoding.UTF8.GetString(action.StandardError.Bytes),
+                            fullDirectory)));
+            }
+
+            return receipts;
+        }
+        finally
+        {
+            if (Directory.Exists(configurationDirectory))
+            {
+                Directory.Delete(configurationDirectory, recursive: true);
+            }
+        }
+    }
+
+    private static void ValidateActionRequest(OfficialValhallaActionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Action is not ("locate" or "route"))
+        {
+            throw new ArgumentException(
+                "Only locate and route qualification actions are supported.",
+                nameof(request));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RequestJson) ||
+            Encoding.UTF8.GetByteCount(request.RequestJson) > 1024 * 1024)
+        {
+            throw new ArgumentException(
+                "The qualification request must be nonempty and no larger than 1 MiB.",
+                nameof(request));
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(request.RequestJson);
+            EnsureSecretFreeJson(document.RootElement);
+        }
+        catch (JsonException exception)
+        {
+            throw new ArgumentException(
+                "The qualification request must contain valid JSON.",
+                nameof(request),
+                exception);
+        }
+    }
+
+    private static void EnsureSecretFreeJson(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    string name = property.Name;
+                    if (name.Contains("key", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("secret", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("authorization", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("cookie", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException(
+                            "Official qualification requests cannot contain credential-bearing fields.");
+                    }
+
+                    EnsureSecretFreeJson(property.Value);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    EnsureSecretFreeJson(item);
+                }
+
+                break;
         }
     }
 
