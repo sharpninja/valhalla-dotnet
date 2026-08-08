@@ -86,9 +86,19 @@ public static class GraphTileChecksum
     /// Recomputes every tile hash and stamps one shared build ID using bounded two-pass I/O.
     /// Each tile is validated and atomically replaced without retaining the complete tileset.
     /// </summary>
-    public static ushort RefreshTilesetFiles(string tileDirectory)
+    public static ushort RefreshTilesetFiles(string tileDirectory) =>
+        RefreshTilesetFiles(tileDirectory, CancellationToken.None);
+
+    /// <summary>
+    /// Recomputes and stamps one tileset while honoring cancellation between every bounded tile
+    /// read, hash, and atomic replacement operation.
+    /// </summary>
+    public static ushort RefreshTilesetFiles(
+        string tileDirectory,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(tileDirectory);
+        cancellationToken.ThrowIfCancellationRequested();
 
         string[] tilePaths =
             Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
@@ -97,7 +107,9 @@ public static class GraphTileChecksum
         ulong accumulator = 0;
         foreach (string tilePath in tilePaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             byte[] tile = File.ReadAllBytes(tilePath);
+            cancellationToken.ThrowIfCancellationRequested();
             ulong tileHash = RefreshTileHash(tile);
             accumulator = unchecked(accumulator + tileHash);
             WriteTileAtomically(tilePath, tile);
@@ -107,7 +119,9 @@ public static class GraphTileChecksum
         ulong buildIdBits = (ulong)buildId << GraphTileHeader.TileHashBits;
         foreach (string tilePath in tilePaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             byte[] tile = File.ReadAllBytes(tilePath);
+            cancellationToken.ThrowIfCancellationRequested();
             GraphTileHeader header = GraphTileHeader.FromBytes(tile);
             header.SetRawChecksum(buildIdBits | header.TileChecksum());
             header.AsSpan().CopyTo(tile);

@@ -159,23 +159,32 @@ internal static class ValhallaGenerationLifecycleRunner
             var validationStartedAtUtc = DateTimeOffset.UtcNow;
             var validation = await validator.ValidateAsync(context, cancellationToken)
                 .ConfigureAwait(false);
+            long validationReceiptBytes = validation.ReceiptLength;
+            IReadOnlyDictionary<string, string> validationHashes =
+                validation.ReceiptSha256 is null
+                    ? new Dictionary<string, string>(StringComparer.Ordinal)
+                    : new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["validation-receipt.json"] = validation.ReceiptSha256,
+                    };
             var validationReceipt = new ValhallaGenerationStageReceipt(
                 currentStage,
                 validationStartedAtUtc,
                 DateTimeOffset.UtcNow,
                 inputIdentity,
-                validation.IsValid ? "validated" : "validation-failed",
-                0,
-                0,
-                0,
+                validation.Receipt?.OutputTreeSha256 ??
+                    (validation.IsValid ? "validated" : "validation-failed"),
+                validation.Receipt?.Statistics.TileCount ?? 0,
+                validation.Receipt?.Statistics.TileBytes ?? 0,
+                validationReceiptBytes,
                 Math.Max(1, resources.PeakWorkerCount),
                 0,
                 0,
-                0,
+                validation.Receipt?.Statistics.TileBytes ?? 0,
                 requestIdentity,
                 [],
                 validation.Failures,
-                new Dictionary<string, string>(StringComparer.Ordinal));
+                validationHashes);
             receipts.Add(validationReceipt);
             if (!validation.IsValid)
             {

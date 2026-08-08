@@ -117,7 +117,10 @@ public interface IValhallaGenerationStageExecutor
 
 public sealed record ValhallaGenerationValidationResult(
     bool IsValid,
-    IReadOnlyList<ValhallaGenerationFailure> Failures)
+    IReadOnlyList<ValhallaGenerationFailure> Failures,
+    Validation.ValhallaGenerationValidationReceipt? Receipt = null,
+    string? ReceiptSha256 = null,
+    long ReceiptLength = 0)
 {
     public static ValhallaGenerationValidationResult Valid { get; } = new(true, []);
 }

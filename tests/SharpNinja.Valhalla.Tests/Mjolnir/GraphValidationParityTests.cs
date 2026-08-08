@@ -46,7 +46,9 @@ public sealed class GraphValidationParityTests
             }
 
             GraphValidator.ValidatorStats stats =
-                GraphValidator.Validate(new GraphReader.Config { TileDir = tileDirectory });
+                GraphValidator.Validate(
+                    new GraphReader.Config { TileDir = tileDirectory },
+                    TestContext.Current.CancellationToken);
             Assert.NotEqual(0, stats.TileCount);
 
             string[] tilePaths =

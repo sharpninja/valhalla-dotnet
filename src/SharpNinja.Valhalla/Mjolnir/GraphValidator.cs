@@ -95,10 +95,19 @@ public static class GraphValidator
     /// </summary>
     /// <param name="config">Reader configuration (tile dir + cache knobs).</param>
     /// <returns>Per-level duplicate / density statistics.</returns>
-    public static ValidatorStats Validate(GraphReader.Config config)
+    public static ValidatorStats Validate(GraphReader.Config config) =>
+        Validate(config, CancellationToken.None);
+
+    /// <summary>
+    /// Validates graph tiles while honoring cancellation between tiles, nodes, directed edges,
+    /// cross-tile bin writes, and final checksum passes.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader.Config config,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return Validate(new GraphReader(config), config.TileDir);
+        return Validate(new GraphReader(config), config.TileDir, cancellationToken);
     }
 
     /// <summary>
@@ -108,10 +117,20 @@ public static class GraphValidator
     /// <param name="reader">Reader over the tile directory being validated.</param>
     /// <param name="tileDir">Tile directory the updated tiles are rewritten to.</param>
     /// <returns>Per-level duplicate / density statistics.</returns>
-    public static ValidatorStats Validate(GraphReader reader, string tileDir)
+    public static ValidatorStats Validate(GraphReader reader, string tileDir) =>
+        Validate(reader, tileDir, CancellationToken.None);
+
+    /// <summary>
+    /// Validates graph tiles through an existing reader with bounded cancellation checks.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader reader,
+        string tileDir,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentException.ThrowIfNullOrEmpty(tileDir);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var stats = new ValidatorStats();
         byte transitLevel = TileHierarchy.GetTransitLevel().Level;
@@ -132,7 +151,16 @@ public static class GraphValidator
 
         foreach (GraphId tileId in tileSet)
         {
-            ValidateTile(reader, tileDir, tileId, transitLevel, problemWays, stats, tweeners);
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateTile(
+                reader,
+                tileDir,
+                tileId,
+                transitLevel,
+                problemWays,
+                stats,
+                tweeners,
+                cancellationToken);
 
             // Check if we need to clear the tile cache.
             if (reader.OverCommitted())
@@ -147,6 +175,7 @@ public static class GraphValidator
         byte localLevel = TileHierarchy.Levels()[^1].Level;
         foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var tweenTileId = new GraphId(tw.Key);
             GraphTile? tile = GraphTile.Create(tileDir, tweenTileId);
             if (tile is null)
@@ -172,7 +201,7 @@ public static class GraphValidator
             EdgeBinner.AddBins(tileDir, tile, tw.Value);
         }
 
-        GraphTileChecksum.RefreshTilesetFiles(tileDir);
+        GraphTileChecksum.RefreshTilesetFiles(tileDir, cancellationToken);
         return stats;
     }
 
@@ -184,8 +213,10 @@ public static class GraphValidator
         byte transitLevel,
         HashSet<ulong> problemWays,
         ValidatorStats stats,
-        EdgeBinner.Tweeners tweeners)
+        EdgeBinner.Tweeners tweeners,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Point tiles to the set we need for current level.
         Tiles<PointLL, double> tiles = tileId.Level() == transitLevel
             ? TileHierarchy.GetTransitLevel().Tiles
@@ -214,6 +245,8 @@ public static class GraphValidator
         GraphId node = tileId;
         for (uint i = 0; i < nodecount; i++, node += 1)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // The node we will modify.
             NodeInfo nodeinfo = tilebuilder.Node((int)i);
             NodeInfo ni = tile.Node((int)i);
@@ -234,6 +267,7 @@ public static class GraphValidator
             var edgeid = new GraphId(node.Tileid(), node.Level(), idx);
             for (uint j = 0, n = nodeinfo.EdgeCount; j < n; j++, idx++, edgeid += 1)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 DirectedEdge de = tile.DirectedEdge((int)idx);
 
                 // Validate signs.
