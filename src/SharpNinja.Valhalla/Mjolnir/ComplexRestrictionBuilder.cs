@@ -1,5 +1,5 @@
 // Faithful C# port of Valhalla mjolnir ComplexRestrictionBuilder
-// (complexrestrictionbuilder.h + src/mjolnir/complexrestrictionbuilder.cc) @ 3.7.0.
+// (complexrestrictionbuilder.h + src/mjolnir/complexrestrictionbuilder.cc) @ 3.8.3 commit a60c7cb.
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/complexrestrictionbuilder.h
 //   F:/github/valhalla/src/mjolnir/complexrestrictionbuilder.cc

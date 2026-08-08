@@ -1,5 +1,5 @@
 // Faithful C# port of Valhalla mjolnir restrictionbuilder.h + src/mjolnir/restrictionbuilder.cc
-// @ 3.7.0 (804 LOC).
+// @ 3.8.3 commit a60c7cb (the upstream implementation is unchanged from 3.7.0).
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/restrictionbuilder.h
 //   F:/github/valhalla/src/mjolnir/restrictionbuilder.cc

@@ -41,7 +41,7 @@ public class PbfGraphParserTests
     private static OSMNode GetNode(PbfGraphParser parser, ulong nodeId) =>
         parser.WayNodes.First(wn => wn.Node.Osmid == nodeId).Node;
 
-    private static (PbfGraphParser parser, OSMData data) Run(PbfBuilder builder, PbfGraphParserOptions? options = null)
+    internal static (PbfGraphParser parser, OSMData data) Run(PbfBuilder builder, PbfGraphParserOptions? options = null)
     {
         byte[] pbf = builder.Build();
         string path = Path.Combine(Path.GetTempPath(), $"tm_pbf_{System.Guid.NewGuid():N}.osm.pbf");
@@ -586,7 +586,7 @@ public class PbfGraphParserTests
         Assert.True(way.HasPronunciationTags());
     }
 
-    private sealed class PbfBuilder
+    internal sealed class PbfBuilder
     {
         private readonly List<(ulong id, double lat, double lon, Dictionary<string, string> tags)> _nodes = new();
         private readonly List<(ulong id, ulong[] refs, Dictionary<string, string> tags)> _ways = new();

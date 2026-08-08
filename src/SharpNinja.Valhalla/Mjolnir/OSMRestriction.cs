@@ -1,5 +1,5 @@
 // Faithful C# port of Valhalla mjolnir OSMRestriction.
-// Source: valhalla/mjolnir/osmrestriction.h @ 3.7.0
+// Source: valhalla/mjolnir/osmrestriction.h @ 3.8.3 commit a60c7cb
 //
 // OSMRestriction holds a simple/complex turn restriction parsed from an OSM
 // relation. It is stored in a multimap keyed by the "from" way id. The C++ struct

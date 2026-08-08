@@ -49,6 +49,34 @@ public sealed class PbfGraphParser
     private const byte UnlimitedSpeedLimit = byte.MaxValue;
     private const float MaxAssumedSpeed = 140.0f;
 
+    private static readonly IReadOnlyDictionary<string, RestrictionType> RestrictionTypes =
+        new Dictionary<string, RestrictionType>(StringComparer.Ordinal)
+        {
+            ["no_left_turn"] = RestrictionType.NoLeftTurn,
+            ["no_right_turn"] = RestrictionType.NoRightTurn,
+            ["no_straight_on"] = RestrictionType.NoStraightOn,
+            ["no_u_turn"] = RestrictionType.NoUTurn,
+            ["only_right_turn"] = RestrictionType.OnlyRightTurn,
+            ["only_left_turn"] = RestrictionType.OnlyLeftTurn,
+            ["only_straight_on"] = RestrictionType.OnlyStraightOn,
+            ["no_entry"] = RestrictionType.NoEntry,
+            ["no_exit"] = RestrictionType.NoExit,
+            ["no_turn"] = RestrictionType.NoTurn,
+        };
+
+    private static readonly string[] TypeSpecificRestrictionKeys =
+    {
+        "restriction:hgv",
+        "restriction:emergency",
+        "restriction:taxi",
+        "restriction:motorcar",
+        "restriction:bus",
+        "restriction:bicycle",
+        "restriction:hazmat",
+        "restriction:motorcycle",
+        "restriction:foot",
+    };
+
     // kMaxMtbScale / kMaxMtbUphillScale from graphconstants.h.
     private const int MaxMtbScale = 6;
     private const int MaxMtbUphillScale = 5;
@@ -794,6 +822,156 @@ public sealed class PbfGraphParser
             _p.Relation(id, members, tags);
     }
 
+    private static bool TryNormalizeRestrictionRelationTags(
+        IReadOnlyDictionary<string, string> rawTags,
+        out IReadOnlyDictionary<string, string> normalizedTags)
+    {
+        normalizedTags = rawTags;
+
+        rawTags.TryGetValue("type", out string? relationType);
+        bool hasRestrictionTag = rawTags.ContainsKey("restriction") ||
+                                 rawTags.ContainsKey("restriction:conditional") ||
+                                 rawTags.ContainsKey("restriction:probable") ||
+                                 TypeSpecificRestrictionKeys.Any(rawTags.ContainsKey);
+        if (!hasRestrictionTag)
+        {
+            return true;
+        }
+
+        if (relationType is not ("restriction" or "route"))
+        {
+            return false;
+        }
+
+        bool hasConditional = rawTags.TryGetValue("restriction:conditional", out string? conditionalValue);
+        bool hasProbable = rawTags.TryGetValue("restriction:probable", out string? probableValue);
+        if (relationType != "restriction" && !hasConditional && !hasProbable)
+        {
+            return false;
+        }
+
+        var tags = new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
+        if (hasProbable && (tags.ContainsKey("restriction") || hasConditional))
+        {
+            tags.Remove("restriction:probable");
+            hasProbable = false;
+            probableValue = null;
+        }
+
+        RestrictionType? genericType = null;
+        if (tags.TryGetValue("restriction", out string? restrictionValue) &&
+            TryParseRestrictionType(restrictionValue, out RestrictionType parsedGenericType))
+        {
+            genericType = parsedGenericType;
+        }
+        else if (hasConditional &&
+                 TrySplitQualifiedRestriction(conditionalValue!, out string conditionalPrefix, out _) &&
+                 TryParseRestrictionType(conditionalPrefix, out parsedGenericType))
+        {
+            genericType = parsedGenericType;
+        }
+        else if (hasProbable &&
+                 TrySplitQualifiedRestriction(probableValue!, out string probablePrefix, out _) &&
+                 TryParseRestrictionType(probablePrefix, out parsedGenericType))
+        {
+            genericType = parsedGenericType;
+        }
+
+        RestrictionType? typeSpecificType = null;
+        foreach (string key in TypeSpecificRestrictionKeys)
+        {
+            if (!tags.TryGetValue(key, out string? value))
+            {
+                continue;
+            }
+
+            if (TryParseRestrictionType(value, out RestrictionType parsedType))
+            {
+                tags[key] = ((byte)parsedType).ToString(CultureInfo.InvariantCulture);
+                typeSpecificType ??= parsedType;
+            }
+            else
+            {
+                tags.Remove(key);
+            }
+        }
+
+        RestrictionType? effectiveType = typeSpecificType ?? genericType;
+        if (effectiveType is null)
+        {
+            return false;
+        }
+
+        if (hasConditional)
+        {
+            if (!TrySplitQualifiedRestriction(conditionalValue!, out _, out string conditionalSuffix))
+            {
+                return false;
+            }
+
+            tags["restriction:conditional"] = conditionalSuffix;
+        }
+
+        if (hasProbable)
+        {
+            if (!TrySplitQualifiedRestriction(probableValue!, out _, out string probableSuffix))
+            {
+                return false;
+            }
+
+            tags["restriction:probable"] = probableSuffix;
+        }
+
+        if (typeSpecificType is null)
+        {
+            tags["restriction"] = ((byte)effectiveType.Value).ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            tags.Remove("restriction");
+        }
+
+        normalizedTags = tags;
+        return true;
+    }
+
+    private static bool TryParseRestrictionType(string value, out RestrictionType type)
+    {
+        string candidate = value.Trim();
+        if (RestrictionTypes.TryGetValue(candidate, out type))
+        {
+            return true;
+        }
+
+        if (byte.TryParse(candidate, NumberStyles.None, CultureInfo.InvariantCulture, out byte numericValue) &&
+            numericValue <= (byte)RestrictionType.NoTurn)
+        {
+            type = (RestrictionType)numericValue;
+            return true;
+        }
+
+        type = default;
+        return false;
+    }
+
+    private static bool TrySplitQualifiedRestriction(
+        string value,
+        out string restriction,
+        out string qualifier)
+    {
+        int separator = value.IndexOf('@', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= value.Length - 1)
+        {
+            restriction = string.Empty;
+            qualifier = string.Empty;
+            return false;
+        }
+
+        restriction = value[..separator].Trim();
+        qualifier = value[(separator + 1)..].Trim();
+        return restriction.Length != 0 && qualifier.Length != 0;
+    }
+
     private void Relation(ulong osmid, IReadOnlyList<OsmRelationMember> members, IReadOnlyDictionary<string, string> rawTags)
     {
         if (osmid < _lastRelation)
@@ -803,9 +981,11 @@ public sealed class PbfGraphParser
 
         _lastRelation = osmid;
 
-        // Relations are not Lua-transformed in graph.lua (relations_proc returns tags as-is) -
-        // the empty-tags case is dropped.
-        if (rawTags.Count == 0)
+        // The official parser receives graph.lua rels_proc output, including normalized numeric
+        // restriction types and separated conditional/probable qualifiers. Reproduce that transform
+        // before applying the C++ graph_parser::relation semantics to raw OSM relation tags.
+        if (rawTags.Count == 0 ||
+            !TryNormalizeRestrictionRelationTags(rawTags, out IReadOnlyDictionary<string, string> tags))
         {
             return;
         }
@@ -825,7 +1005,7 @@ public sealed class PbfGraphParser
         string hourStart = string.Empty, hourEnd = string.Empty, dayStart = string.Empty, dayEnd = string.Empty;
         uint modes = 0;
 
-        foreach (KeyValuePair<string, string> tag in rawTags)
+        foreach (KeyValuePair<string, string> tag in tags)
         {
             string key = tag.Key;
             string value = tag.Value;

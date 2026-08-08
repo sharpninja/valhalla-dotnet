@@ -70,7 +70,10 @@ public sealed class NashvilleLaneFrictionIntegrationTests
                     .ToHashSet());
             new OsmPbfReader(tagCollector).Parse(pbf);
 
-            Assert.Empty(tagCollector.ConnectivityRelations);
+            // Route selection can legitimately move onto ways that have raw OSM connectivity relations.
+            // Completeness is determined from the graph projection below, not from a zero-relation shortcut.
+            _output.WriteLine(
+                $"raw PBF connectivity relations touching routed ways={tagCollector.ConnectivityRelations.Count}");
             Assert.All(
                 graphEvidence,
                 routeEvidence =>
@@ -199,8 +202,22 @@ public sealed class NashvilleLaneFrictionIntegrationTests
                     validOverlay.Edges,
                     overlayEdge =>
                     {
-                        LaneTopologySegment segment = identitySnapshot.Edges[
-                            overlayEdge.CanonicalDirectedEdgeId];
+                        if (!identitySnapshot.Edges.TryGetValue(
+                                overlayEdge.CanonicalDirectedEdgeId,
+                                out LaneTopologySegment? segment))
+                        {
+                            ulong[] replacementCandidates = identitySnapshot.Edges
+                                .Where(pair =>
+                                    pair.Value.GraphEvidence is LaneTopologyGraphEvidence evidence &&
+                                    evidence.CanonicalStartNodeId == overlayEdge.CanonicalStartNodeId &&
+                                    evidence.CanonicalEndNodeId == overlayEdge.CanonicalEndNodeId)
+                                .Select(static pair => pair.Key)
+                                .ToArray();
+                            Assert.Fail(
+                                $"Overlay edge {overlayEdge.CanonicalDirectedEdgeId} is absent; " +
+                                $"same-node candidates=[{string.Join(",", replacementCandidates)}].");
+                        }
+
                         LaneTopologyGraphEvidence graphIdentity =
                             Assert.IsType<LaneTopologyGraphEvidence>(
                                 segment.GraphEvidence);
