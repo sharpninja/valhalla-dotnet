@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/valhalla/valhalla.git",
+    "release": "3.8.3",
+    "commit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+    "container": "ghcr.io/valhalla/valhalla:3.8.3",
+    "containerDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f"
+  },
+  "compatibility": {
+    "graphFormat": "3.8",
+    "timeZoneDatabase": "2026c",
+    "managedWriterTarget": "3.8.3",
+    "legacyReaderMinimum": "3.7.0"
+  },
+  "verifiedAtUtc": "2026-08-08T10:45:00Z",
+  "verification": {
+    "tagSource": "git ls-remote https://github.com/valhalla/valhalla.git refs/tags/3.8.3",
+    "containerSource": "docker image inspect ghcr.io/valhalla/valhalla:3.8.3",
+    "tagMatchedCommit": true,
+    "installedImageMatchedDigest": true
+  }
+}

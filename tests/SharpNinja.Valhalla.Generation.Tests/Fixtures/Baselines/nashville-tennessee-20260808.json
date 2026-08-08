@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-08-08T08:29:57Z",
+  "sourceReport": "F:/GitHub/TruckMate/artifacts/benchmarks/nashville-tile-generation/20260808T082957Z/nashville-tile-generation-report.md",
+  "workload": {
+    "name": "Nashville via Tennessee Geofabrik extract",
+    "sourceUrl": "https://download.geofabrik.de/north-america/us/tennessee-latest.osm.pbf",
+    "inputLengthBytes": 187116535,
+    "inputSha256": "6AD6323EF76D47D13F8889F974968F04DE72F56EFCFBD9070446C18E4FFB172B",
+    "outputGraphTileCount": 269,
+    "optionalAdminTimeZoneElevationTransitBikeShareInputs": false
+  },
+  "host": {
+    "cpu": "AMD Ryzen 7 2700X",
+    "physicalCores": 8,
+    "logicalProcessors": 16,
+    "hostMemoryGiB": 31.9,
+    "dockerCpuLimit": 16,
+    "dockerMemoryLimitGiB": 15.0,
+    "storage": "PAYTON-DESKTOP F: Windows bind mount"
+  },
+  "official": {
+    "container": "ghcr.io/valhalla/valhalla:3.8.3",
+    "containerDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f",
+    "workers": 16,
+    "durationsSeconds": [537.308, 558.245, 540.210],
+    "peakMemoryBytes": [3127809933, 3025804460, 3296387400],
+    "outputBytes": 424596512,
+    "successfulRuns": 3,
+    "failedRunsRetained": 1
+  },
+  "managed": {
+    "packageVersion": "1.4.0",
+    "sourceCommit": "ce0be4850a0c11ee1bad2c3c78dfe2f665f2cc0b",
+    "durationsSeconds": [536.968, 545.095, 530.986],
+    "peakMemoryBytes": [5987184411, 5951750930, 5950677189],
+    "outputBytes": 441971056,
+    "successfulRuns": 3,
+    "deterministicOutput": true
+  },
+  "qualificationTargets": {
+    "minimumManagedMedianSpeedupPercent": 20.0,
+    "maximumManagedToOfficialPeakMemoryRatio": 1.25,
+    "maximumManagedToOfficialOutputSizeRatio": 1.05,
+    "requiredMeasuredRuns": 5
+  }
+}

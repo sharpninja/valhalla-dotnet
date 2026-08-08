@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>SharpNinja.Valhalla.Generation</PackageId>
+    <Version>2.0.0</Version>
+    <Authors>SharpNinja</Authors>
+    <Description>Production Valhalla graph-generation, validation, and differential qualification APIs for .NET.</Description>
+    <PackageTags>valhalla;osm;routing;generation;mjolnir</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpNinja.Valhalla\SharpNinja.Valhalla.csproj" />
+  </ItemGroup>
+</Project>

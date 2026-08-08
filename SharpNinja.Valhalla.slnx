@@ -1,11 +1,10 @@
 <Solution>
-  <Folder Name="/build/">
-    <Project Path="build/_build.csproj" />
-  </Folder>
   <Folder Name="/src/">
     <Project Path="src/SharpNinja.Valhalla/SharpNinja.Valhalla.csproj" />
+    <Project Path="src/SharpNinja.Valhalla.Generation/SharpNinja.Valhalla.Generation.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SharpNinja.Valhalla.Generation.Tests/SharpNinja.Valhalla.Generation.Tests.csproj" />
     <Project Path="tests/SharpNinja.Valhalla.Tests/SharpNinja.Valhalla.Tests.csproj" />
   </Folder>
 </Solution>
