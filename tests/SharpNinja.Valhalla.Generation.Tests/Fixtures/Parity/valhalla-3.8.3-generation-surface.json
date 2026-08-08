@@ -1,0 +1,894 @@
+{
+  "schemaVersion": 1,
+  "upstreamVersion": "3.8.3",
+  "upstreamCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+  "auditCommand": "git grep -l -E 'mjolnir::|build_tile_set|buildtiles|GraphBuilder|GraphEnhancer|HierarchyBuilder|ShortcutBuilder|TransitBuilder|BssBuilder|ElevationBuilder|RestrictionBuilder|GraphValidator|valhalla_build_' a60c7cbfc83e073f50887cd27e0109d02e6b64e5 -- test",
+  "stages": [
+    {
+      "name": "kInitialize",
+      "status": "implemented",
+      "rationale": "Isolated staging, validated inputs, and ordered lifecycle receipts.",
+      "upstreamSources": [
+        "valhalla/mjolnir/util.h"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Lifecycle/ManagedGenerationLifecycleTests.cs#BuildAsync_ReportsOrderedStagesAndReceipts"
+      ]
+    },
+    {
+      "name": "kParseWays",
+      "status": "implemented",
+      "rationale": "One-pass bounded PBF decoding emits stable way records and retained tags.",
+      "upstreamSources": [
+        "src/mjolnir/pbfgraphparser.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "name": "kParseRelations",
+      "status": "implemented",
+      "rationale": "One-pass bounded PBF decoding retains relation restrictions and linguistics.",
+      "upstreamSources": [
+        "src/mjolnir/pbfgraphparser.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial"
+      ]
+    },
+    {
+      "name": "kParseNodes",
+      "status": "implemented",
+      "rationale": "One-pass decoding preserves coordinates, controls, access, BSS, and linguistic node data.",
+      "upstreamSources": [
+        "src/mjolnir/pbfgraphparser.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/PbfGraphParserTests.cs#PbfGraphParserTests"
+      ]
+    },
+    {
+      "name": "kConstructEdges",
+      "status": "implemented",
+      "rationale": "Stable directed-edge identities are frozen before parallel tile work.",
+      "upstreamSources": [
+        "src/mjolnir/graphbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphBuilderTests.cs#GraphBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "name": "kBuild",
+      "status": "implemented",
+      "rationale": "Managed 3.8.3 tiles are readable by stock Valhalla and preserve all routing sections.",
+      "upstreamSources": [
+        "src/mjolnir/graphtilebuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphTileBuilderTests.cs#GraphTileBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "name": "kEnhance",
+      "status": "implemented",
+      "rationale": "Official speeds, access/admin attribution, density, controls, links, and ferries are applied.",
+      "upstreamSources": [
+        "src/mjolnir/graphenhancer.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification"
+      ]
+    },
+    {
+      "name": "kFilter",
+      "status": "implemented",
+      "rationale": "Configured travel-mode filtering preserves deterministic node and edge remapping.",
+      "upstreamSources": [
+        "src/mjolnir/graphfilter.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphFilterTests.cs#GraphFilterTests"
+      ]
+    },
+    {
+      "name": "kTransit",
+      "status": "implemented",
+      "rationale": "GTFS records, calendars, shapes, timezones, and graph connections match official semantics.",
+      "upstreamSources": [
+        "src/mjolnir/transitbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "name": "kBss",
+      "status": "implemented",
+      "rationale": "Bike-share discovery and graph connection match the pinned official fixture.",
+      "upstreamSources": [
+        "src/mjolnir/bssbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/BikeShare/BikeShareGenerationParityTests.cs#ManagedBikeShareGraph_MatchesOfficialFixture"
+      ]
+    },
+    {
+      "name": "kHierarchy",
+      "status": "implemented",
+      "rationale": "Hierarchy transitions are built with deterministic discovery/write barriers.",
+      "upstreamSources": [
+        "src/mjolnir/hierarchybuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/HierarchyBuilderTests.cs#HierarchyBuilderTests"
+      ]
+    },
+    {
+      "name": "kShortcuts",
+      "status": "implemented",
+      "rationale": "Shortcut construction preserves official recoverability and route semantics.",
+      "upstreamSources": [
+        "src/mjolnir/shortcutbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/ShortcutBuilderTests.cs#ShortcutBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "name": "kRestrictions",
+      "status": "implemented",
+      "rationale": "Simple, complex, conditional, directional, probable, truck, and multi-via restrictions match.",
+      "upstreamSources": [
+        "src/mjolnir/restrictionbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial"
+      ]
+    },
+    {
+      "name": "kElevation",
+      "status": "implemented",
+      "rationale": "Nodes, profiles, grades, clamping, and metadata match official elevated tiles.",
+      "upstreamSources": [
+        "src/mjolnir/elevationbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Elevation/ElevationGenerationParityTests.cs#ManagedElevation_MatchesOfficialSemanticFixture"
+      ]
+    },
+    {
+      "name": "kValidate",
+      "status": "implemented",
+      "rationale": "Structure, bins, indexes, transitions, shortcuts, checksums, and build identity are validated.",
+      "upstreamSources": [
+        "src/mjolnir/graphvalidator.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphValidationParityTests.cs#ValidatedGraphStructure_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Validation/ManagedGenerationValidationReceiptTests.cs#ValidGraph_ProducesCompleteDeterministicReceipt"
+      ]
+    },
+    {
+      "name": "kCleanup",
+      "status": "implemented",
+      "rationale": "Failed staging is abandoned and only validated output is atomically promoted.",
+      "upstreamSources": [
+        "src/mjolnir/util.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Lifecycle/ManagedGenerationLifecycleTests.cs#BuildAsync_ReportsOrderedStagesAndReceipts",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphValidationParityTests.cs#ValidatedGraphStructure_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Validation/ManagedGenerationValidationReceiptTests.cs#ValidGraph_ProducesCompleteDeterministicReceipt"
+      ]
+    }
+  ],
+  "upstreamTests": [
+    {
+      "path": "test/access_restriction.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/access_restriction.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/admin.cc",
+      "status": "implemented",
+      "rationale": "Administrative geometry, identity, driving-side, and access behavior match the official fixture.",
+      "upstreamEvidence": [
+        "test/admin.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Admin/AdminGenerationParityTests.cs#ManagedAdmins_MatchOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/complexrestriction.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/complexrestriction.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/countryaccess.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/countryaccess.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/elevation_builder.cc",
+      "status": "implemented",
+      "rationale": "Elevation profiles, grades, clamping, and metadata are compared with pinned official tiles.",
+      "upstreamEvidence": [
+        "test/elevation_builder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Elevation/ElevationGenerationParityTests.cs#ManagedElevation_MatchesOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/graphbuilder.cc",
+      "status": "implemented",
+      "rationale": "Graph identity, tile layout, structure, and stock-reader compatibility are covered.",
+      "upstreamEvidence": [
+        "test/graphbuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphBuilderTests.cs#GraphBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/graphparser.cc",
+      "status": "implemented",
+      "rationale": "OSM/PBF normalization is covered by differential, encoding, and hostile parser tests.",
+      "upstreamEvidence": [
+        "test/graphparser.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/PbfGraphParserTests.cs#PbfGraphParserTests"
+      ]
+    },
+    {
+      "path": "test/graphtile.cc",
+      "status": "implemented",
+      "rationale": "Graph-tile section layout and serialization are covered by builder and stock-reader evidence.",
+      "upstreamEvidence": [
+        "test/graphtile.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphTileBuilderTests.cs#GraphTileBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/graphtilebuilder.cc",
+      "status": "implemented",
+      "rationale": "Graph-tile section layout and serialization are covered by builder and stock-reader evidence.",
+      "upstreamEvidence": [
+        "test/graphtilebuilder.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphTileBuilderTests.cs#GraphTileBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/hierarchylimits.cc",
+      "status": "implemented",
+      "rationale": "Hierarchy transitions and limits are covered by managed hierarchy tests.",
+      "upstreamEvidence": [
+        "test/hierarchylimits.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/HierarchyBuilderTests.cs#HierarchyBuilderTests"
+      ]
+    },
+    {
+      "path": "test/lua.cc",
+      "status": "implemented",
+      "rationale": "Node/way tags, directional controls, access, speeds, and dimensions are covered by the transformation corpus.",
+      "upstreamEvidence": [
+        "test/lua.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/matrix_bss.cc",
+      "status": "implemented",
+      "rationale": "Bike-share station discovery and graph connection match the official BSS fixture.",
+      "upstreamEvidence": [
+        "test/matrix_bss.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/BikeShare/BikeShareGenerationParityTests.cs#ManagedBikeShareGraph_MatchesOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/nodetransition.cc",
+      "status": "implemented",
+      "rationale": "Hierarchy transitions and limits are covered by managed hierarchy tests.",
+      "upstreamEvidence": [
+        "test/nodetransition.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/HierarchyBuilderTests.cs#HierarchyBuilderTests"
+      ]
+    },
+    {
+      "path": "test/refs.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/refs.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/scripts/test_valhalla_build_elevation.py",
+      "status": "implemented",
+      "rationale": "Elevation profiles, grades, clamping, and metadata are compared with pinned official tiles.",
+      "upstreamEvidence": [
+        "test/scripts/test_valhalla_build_elevation.py"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Elevation/ElevationGenerationParityTests.cs#ManagedElevation_MatchesOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/scripts/test_valhalla_build_extract.py",
+      "status": "implemented",
+      "rationale": "The immutable managed extract is accepted by pinned stock Valhalla.",
+      "upstreamEvidence": [
+        "test/scripts/test_valhalla_build_extract.py"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Extracts/ManagedTileExtractBuilderTests.cs#BuildsImmutableRegionAddressableExtract",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphBuilderTests.cs#GraphBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/sequence.cc",
+      "status": "implemented",
+      "rationale": "Stable ordering and deterministic reproduction are covered across parallelism levels.",
+      "upstreamEvidence": [
+        "test/sequence.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Parallel/ParallelGenerationExecutionTests.cs#PsrsSort_MatchesStableScalarReference",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Parallel/ParallelGenerationExecutionTests.cs#ParallelBuild_ProducesStableTreeHash"
+      ]
+    },
+    {
+      "path": "test/signinfo.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/signinfo.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/transitdeparture.cc",
+      "status": "implemented",
+      "rationale": "GTFS records, schedules, shapes, timezones, and connections match the official fixture.",
+      "upstreamEvidence": [
+        "test/transitdeparture.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "path": "test/transitroute.cc",
+      "status": "implemented",
+      "rationale": "GTFS records, schedules, shapes, timezones, and connections match the official fixture.",
+      "upstreamEvidence": [
+        "test/transitroute.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "path": "test/transitschedule.cc",
+      "status": "implemented",
+      "rationale": "GTFS records, schedules, shapes, timezones, and connections match the official fixture.",
+      "upstreamEvidence": [
+        "test/transitschedule.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "path": "test/transitstop.cc",
+      "status": "implemented",
+      "rationale": "GTFS records, schedules, shapes, timezones, and connections match the official fixture.",
+      "upstreamEvidence": [
+        "test/transitstop.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "path": "test/util_mjolnir.cc",
+      "status": "implemented",
+      "rationale": "Stage ordering, deterministic cleanup, checkpoints, and publication are covered.",
+      "upstreamEvidence": [
+        "test/util_mjolnir.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Lifecycle/ManagedGenerationLifecycleTests.cs#BuildAsync_ReportsOrderedStagesAndReceipts"
+      ]
+    },
+    {
+      "path": "test/gurka/test_64bit_wayid.cc",
+      "status": "implemented",
+      "rationale": "OSM/PBF normalization is covered by differential, encoding, and hostile parser tests.",
+      "upstreamEvidence": [
+        "test/gurka/test_64bit_wayid.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/PbfGraphParserTests.cs#PbfGraphParserTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_access.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_access.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_admin_sidewalk_crossing_override.cc",
+      "status": "implemented",
+      "rationale": "Administrative geometry, identity, driving-side, and access behavior match the official fixture.",
+      "upstreamEvidence": [
+        "test/gurka/test_admin_sidewalk_crossing_override.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Admin/AdminGenerationParityTests.cs#ManagedAdmins_MatchOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_admin.cc",
+      "status": "implemented",
+      "rationale": "Administrative geometry, identity, driving-side, and access behavior match the official fixture.",
+      "upstreamEvidence": [
+        "test/gurka/test_admin.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Admin/AdminGenerationParityTests.cs#ManagedAdmins_MatchOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_area_routing.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_area_routing.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_build_admin.cc",
+      "status": "implemented",
+      "rationale": "Administrative geometry, identity, driving-side, and access behavior match the official fixture.",
+      "upstreamEvidence": [
+        "test/gurka/test_build_admin.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Admin/AdminGenerationParityTests.cs#ManagedAdmins_MatchOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_conditional_restrictions.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_conditional_restrictions.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_config_speed.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_config_speed.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_deadend.cc",
+      "status": "implemented",
+      "rationale": "Graph identity, tile layout, structure, and stock-reader compatibility are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_deadend.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphBuilderTests.cs#GraphBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/gurka/test_elevation.cc",
+      "status": "implemented",
+      "rationale": "Elevation profiles, grades, clamping, and metadata are compared with pinned official tiles.",
+      "upstreamEvidence": [
+        "test/gurka/test_elevation.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Elevation/ElevationGenerationParityTests.cs#ManagedElevation_MatchesOfficialSemanticFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_ferry_connections.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_ferry_connections.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_filter.cc",
+      "status": "implemented",
+      "rationale": "Mode filtering and deterministic graph remapping are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_filter.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphFilterTests.cs#GraphFilterTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_graphfilter.cc",
+      "status": "implemented",
+      "rationale": "Mode filtering and deterministic graph remapping are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_graphfilter.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphFilterTests.cs#GraphFilterTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_gtfs.cc",
+      "status": "implemented",
+      "rationale": "GTFS records, schedules, shapes, timezones, and connections match the official fixture.",
+      "upstreamEvidence": [
+        "test/gurka/test_gtfs.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationParityTests.cs#ManagedTransitGraph_MatchesOfficialFixture",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Transit/TransitGenerationCompletenessTests.cs#LongTripShape_IsSlicedPerStopPair"
+      ]
+    },
+    {
+      "path": "test/gurka/test_languages.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/gurka/test_languages.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_maxspeed.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_maxspeed.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_only_restrictions.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_only_restrictions.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_parse_osm.cc",
+      "status": "implemented",
+      "rationale": "OSM/PBF normalization is covered by differential, encoding, and hostile parser tests.",
+      "upstreamEvidence": [
+        "test/gurka/test_parse_osm.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/PbfGraphParserTests.cs#PbfGraphParserTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_pbf_api.cc",
+      "status": "implemented",
+      "rationale": "OSM/PBF normalization is covered by differential, encoding, and hostile parser tests.",
+      "upstreamEvidence": [
+        "test/gurka/test_pbf_api.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Pbf/StreamingOsmPbfReaderTests.cs#OptimizedParser_MatchesLegacySemanticModel",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/PbfGraphParserTests.cs#PbfGraphParserTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_phonemes.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/gurka/test_phonemes.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_phonemes_w_langs.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/gurka/test_phonemes_w_langs.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_probable_restrictions.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_probable_restrictions.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_ramps_tc.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_ramps_tc.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_reproduce_tile_build.cc",
+      "status": "implemented",
+      "rationale": "Stable ordering and deterministic reproduction are covered across parallelism levels.",
+      "upstreamEvidence": [
+        "test/gurka/test_reproduce_tile_build.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Generation.Tests/Parallel/ParallelGenerationExecutionTests.cs#PsrsSort_MatchesStableScalarReference",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Parallel/ParallelGenerationExecutionTests.cs#ParallelBuild_ProducesStableTreeHash"
+      ]
+    },
+    {
+      "path": "test/gurka/test_restricted_area.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_restricted_area.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_shortcut.cc",
+      "status": "implemented",
+      "rationale": "Shortcut construction and route equivalence are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_shortcut.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/ShortcutBuilderTests.cs#ShortcutBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_simple_restrictions.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_simple_restrictions.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_speeds.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_speeds.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_stop_signs.cc",
+      "status": "implemented",
+      "rationale": "Node/way tags, directional controls, access, speeds, and dimensions are covered by the transformation corpus.",
+      "upstreamEvidence": [
+        "test/gurka/test_stop_signs.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_tagged_values.cc",
+      "status": "implemented",
+      "rationale": "Names, references, languages, pronunciations, signs, and tagged values round-trip with official semantics.",
+      "upstreamEvidence": [
+        "test/gurka/test_tagged_values.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/LinguisticGenerationParityTests.cs#ManagedNamesAndPronunciations_MatchOfficialFixture"
+      ]
+    },
+    {
+      "path": "test/gurka/test_time_dependent_restrictions.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_time_dependent_restrictions.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_time_dependent_tags.cc",
+      "status": "implemented",
+      "rationale": "Restriction parsing, normalization, serialization, and route behavior are covered by the official matrix.",
+      "upstreamEvidence": [
+        "test/gurka/test_time_dependent_tags.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/RestrictionGenerationParityTests.cs#RestrictionMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/OfficialRouteDifferentialTests.cs#ManagedTiles_MatchOfficialRouteMatrix"
+      ]
+    },
+    {
+      "path": "test/gurka/test_traffic_signals.cc",
+      "status": "implemented",
+      "rationale": "Node/way tags, directional controls, access, speeds, and dimensions are covered by the transformation corpus.",
+      "upstreamEvidence": [
+        "test/gurka/test_traffic_signals.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_truck.cc",
+      "status": "implemented",
+      "rationale": "3.8.3 speeds, access, area, link, ramp, ferry, and control behavior are covered.",
+      "upstreamEvidence": [
+        "test/gurka/test_truck.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#DefaultSpeedAndAccessMatrix_MatchesOfficial",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/Valhalla383RoadBehaviorParityTests.cs#ManagedPipeline_MatchesOfficialClassification",
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    },
+    {
+      "path": "test/gurka/test_turn_lanes.cc",
+      "status": "implemented",
+      "rationale": "Graph-tile section layout and serialization are covered by builder and stock-reader evidence.",
+      "upstreamEvidence": [
+        "test/gurka/test_turn_lanes.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/GraphTileBuilderTests.cs#GraphTileBuilderTests",
+        "tests/SharpNinja.Valhalla.Generation.Tests/Qualification/BidirectionalTileCompatibilityTests.cs#ManagedAndOfficialReaders_CrossReadTiles"
+      ]
+    },
+    {
+      "path": "test/gurka/test_yield_signs.cc",
+      "status": "implemented",
+      "rationale": "Node/way tags, directional controls, access, speeds, and dimensions are covered by the transformation corpus.",
+      "upstreamEvidence": [
+        "test/gurka/test_yield_signs.cc"
+      ],
+      "managedEvidence": [
+        "tests/SharpNinja.Valhalla.Tests/Mjolnir/TagTransformTests.cs#TagTransformTests"
+      ]
+    }
+  ]
+}
