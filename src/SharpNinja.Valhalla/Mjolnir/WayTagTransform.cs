@@ -65,10 +65,18 @@ public static class WayTagTransform
             return 1;
         }
 
-        // toss actual areas.
+        // Valhalla 3.8.3 keeps pedestrian areas for the optional pedestrian-area graph pass.
+        // Other area rings remain non-routable and are filtered here.
         if (kv.Eq("area", "yes"))
         {
-            return 1;
+            if (kv.Eq("highway", "pedestrian"))
+            {
+                kv.SetString("pedestrian_area", "true");
+            }
+            else
+            {
+                return 1;
+            }
         }
 
         Dictionary<string, string>? forward = null;

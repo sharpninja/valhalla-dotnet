@@ -466,6 +466,62 @@ public class PbfGraphParserTests
         Assert.True(data.Initialized);
     }
 
+    // ---- Valhalla 3.8.3 road behavior ----------------------------------------
+
+    [Fact]
+    public void PedestrianArea_DefaultPolicyDropsWay()
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.10, -86.79);
+        b.AddNode(3, 36.11, -86.79);
+        b.AddWay(
+            700,
+            new ulong[] { 1, 2, 3, 1 },
+            new() { ["highway"] = "pedestrian", ["area"] = "yes" });
+
+        (PbfGraphParser parser, _) = Run(b);
+
+        Assert.DoesNotContain(parser.Ways, way => way.WayId() == 700);
+    }
+
+    [Fact]
+    public void PedestrianArea_EnabledRetainsAreaButGraphBuilderSkipsRing()
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.10, -86.79);
+        b.AddNode(3, 36.11, -86.79);
+        b.AddWay(
+            701,
+            new ulong[] { 1, 2, 3, 1 },
+            new() { ["highway"] = "pedestrian", ["area"] = "yes" });
+
+        (PbfGraphParser parser, _) = Run(b, new PbfGraphParserOptions { PedestrianAreas = true });
+
+        OSMWay area = GetWay(parser, 701);
+        Assert.True(area.Area());
+        Assert.Empty(GraphBuilder.BuildEdges(parser.Ways, parser.WayNodes).Edges);
+    }
+
+    [Theory]
+    [InlineData("clay")]
+    [InlineData("laterite")]
+    public void Surface_Valhalla383DirtValues_AreClassifiedAsDirt(string surface)
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.11, -86.79);
+        b.AddWay(
+            702,
+            new ulong[] { 1, 2 },
+            new() { ["highway"] = "track", ["surface"] = surface });
+
+        (PbfGraphParser parser, _) = Run(b);
+
+        Assert.Equal(Surface.Dirt, GetWay(parser, 702).SurfaceValue());
+    }
+
     // =========================================================================
     // Minimal .osm.pbf builder (a flexible version of the OsmPbfReaderTests fixture).
     // Emits a single OSMHeader + a single OSMData PrimitiveBlock with one group holding

@@ -351,6 +351,13 @@ public sealed class OSMWay
 
     public bool Roundabout() => RoundaboutValue;
 
+    /// <summary>Gets or sets whether this way is the boundary of a routable pedestrian area.</summary>
+    public bool AreaValue { get; set; }
+
+    public void SetArea(bool value) => AreaValue = value;
+
+    public bool Area() => AreaValue;
+
     public bool FerryValue { get; set; }
 
     public void SetFerry(bool v) => FerryValue = v;

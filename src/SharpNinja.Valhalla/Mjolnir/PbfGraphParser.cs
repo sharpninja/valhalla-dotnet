@@ -62,6 +62,7 @@ public sealed class PbfGraphParser
     private readonly bool _includePlatforms;
     private readonly bool _includeDriveways;
     private readonly bool _includeConstruction;
+    private readonly bool _pedestrianAreas;
     private readonly bool _inferInternalIntersections;
     private readonly bool _inferTurnChannels;
     private readonly bool _useDirectionOnWays;
@@ -124,6 +125,7 @@ public sealed class PbfGraphParser
         _includePlatforms = options.IncludePlatforms;
         _includeDriveways = options.IncludeDriveways;
         _includeConstruction = options.IncludeConstruction;
+        _pedestrianAreas = options.PedestrianAreas;
         _inferInternalIntersections = options.InferInternalIntersections;
         _inferTurnChannels = options.InferTurnChannels;
         _useDirectionOnWays = options.UseDirectionOnWays;
@@ -251,6 +253,14 @@ public sealed class PbfGraphParser
 
         try
         {
+            // The 3.8.3 Lua transform retains pedestrian-area rings so the optional area builder
+            // can consume them. The default road-graph parser still excludes them.
+            if (!_pedestrianAreas && tags.TryGetValue("pedestrian_area", out string? pedestrianArea) &&
+                pedestrianArea == "true")
+            {
+                return;
+            }
+
             // Throw away use if include_driveways_ is false and it is a private driveway.
             if (!_includeDriveways && tags.TryGetValue("use", out string? useDw) &&
                 (Use)ToInt(useDw) == Use.Driveway)
@@ -1481,6 +1491,9 @@ public sealed class PbfGraphParser
                 }
 
                 return true;
+            case "pedestrian_area":
+                _way.SetArea(value == "true");
+                return true;
             case "use":
                 SetUse(value);
                 return true;
@@ -2039,7 +2052,8 @@ public sealed class PbfGraphParser
             _way.SetSurface(Surface.Compacted);
         }
         else if (v.Contains("dirt") || v.Contains("natural") || v.Contains("earth") ||
-                 v.Contains("ground") || v.Contains("mud"))
+                 v.Contains("ground") || v.Contains("mud") || v.Contains("clay") ||
+                 v.Contains("laterite"))
         {
             _way.SetSurface(Surface.Dirt);
         }
@@ -2386,7 +2400,7 @@ public sealed class PbfGraphParser
     private static int ToInt(string value)
     {
         // Faithful to C++ atoi / Lua tonumber: unparseable OSM tag values (e.g. a Unicode minus
-        // U+2212 "−3", or values with trailing units) yield the default rather than throwing.
+        // U+2212 "???3", or values with trailing units) yield the default rather than throwing.
         return Midgard.Util.TryToInt(value, out int n) ? n : 0;
     }
 
@@ -2563,6 +2577,9 @@ public sealed class PbfGraphParserOptions
 
     /// <summary>Include roads under construction (C++ <c>include_construction</c>, default false).</summary>
     public bool IncludeConstruction { get; set; }
+
+    /// <summary>Generate routable pedestrian-area data (C++ <c>pedestrian_areas</c>, default false).</summary>
+    public bool PedestrianAreas { get; set; }
 
     /// <summary>Infer internal intersections later (C++ <c>infer_internal_intersections</c>, default true).</summary>
     public bool InferInternalIntersections { get; set; } = true;

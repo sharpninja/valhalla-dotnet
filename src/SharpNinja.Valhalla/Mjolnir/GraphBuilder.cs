@@ -152,6 +152,14 @@ public sealed class GraphBuilder
             int lastWayNodeIndex =
                 (int)(firstWayNodeIndex + way.NodeCount() - wayNode.WayShapeNodeIndex - 1);
 
+            // Valhalla 3.8.3 retains pedestrian-area rings for the dedicated area pass, but those
+            // boundary ways must never create ordinary graph edges.
+            if (way.Area())
+            {
+                currentWayNodeIndex = lastWayNodeIndex + 1;
+                continue;
+            }
+
             // Validate - make sure all nodes for this edge are valid.
             bool valid = true;
             for (int ni = currentWayNodeIndex; ni <= lastWayNodeIndex; ni++)
