@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "upstreamVersion": "3.8.3",
+  "upstreamCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+  "containerImage": "ghcr.io/valhalla/valhalla:3.8.3",
+  "containerDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f",
+  "command": "valhalla_add_predicted_traffic -j 1",
+  "graphId": "0/3016/0",
+  "freeFlowSpeed": 72,
+  "constrainedFlowSpeed": 41,
+  "predictedSpeedAtWeekStart": 35.99118,
+  "baseTileSha256": "DAD827738A5B9F181A0650B0466405E5D94DA8108924C0E6BF8379AC03DE0460",
+  "inputSha256": "321703FE7E1D02019498BDBDE0101FAC0BF0B5929A5AB96910A73867AD663885",
+  "outputTileSha256": "D61ACE5A88C4E4A02F91CEFC68140662B07EFC6941C53AD1BBE0F476A3D4ABAC"
+}
