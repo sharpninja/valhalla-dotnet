@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpNinja.Valhalla.Generation;
 using SharpNinja.Valhalla.Generation.Differential;
 using Xunit;
 
