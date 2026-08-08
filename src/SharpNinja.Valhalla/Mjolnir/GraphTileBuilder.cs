@@ -29,6 +29,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using SharpNinja.Valhalla.Baldr;
@@ -692,7 +693,10 @@ public sealed partial class GraphTileBuilder
     /// </summary>
     public byte[] StoreTileData()
     {
-        using var inMem = new MemoryStream();
+        int serializedSize = GetSerializedSize();
+        byte[] blob = GC.AllocateUninitializedArray<byte>(serializedSize);
+        using var inMem = new MemoryStream(blob, writable: true);
+        inMem.Position = GraphTileHeaderSize;
 
         // Write the nodes.
         _headerBuilder.SetNodecount((uint)_nodesBuilder.Count);
@@ -838,14 +842,63 @@ public sealed partial class GraphTileBuilder
             (uint)(_headerBuilder.LaneConnectivityOffset() +
                    (_laneConnectivityBuilder.Count * LaneConnectivitySize)));
 
-        // Assemble: header followed by the rest of the tile from the in-memory buffer.
-        byte[] body = inMem.ToArray();
-        var blob = new byte[GraphTileHeaderSize + body.Length];
+        if (inMem.Position != blob.Length)
+        {
+            throw new InvalidOperationException(
+                $"Graph tile serialization wrote {inMem.Position} of {blob.Length} bytes.");
+        }
+
         _headerBuilder.AsSpan().CopyTo(blob);
-        Array.Copy(body, 0, blob, GraphTileHeaderSize, body.Length);
         return blob;
     }
 
+    private int GetSerializedSize()
+    {
+        int extendedEdgeCount =
+            _directedEdgesExtBuilder.Count > 0 &&
+            _directedEdgesExtBuilder.Count == _directedEdgesBuilder.Count
+                ? _directedEdgesExtBuilder.Count
+                : 0;
+        checked
+        {
+            long bodySize =
+                ((long)_nodesBuilder.Count * NodeInfoSize) +
+                ((long)_transitionsBuilder.Count * NodeTransitionSize) +
+                ((long)_directedEdgesBuilder.Count * DirectedEdgeSize) +
+                ((long)extendedEdgeCount * DirectedEdgeExtSize) +
+                ((long)_accessRestrictionBuilder.Count * AccessRestrictionSize) +
+                ((long)_signsBuilder.Count * SignSize) +
+                ((long)_turnlanesBuilder.Count * TurnLanesSize) +
+                ((long)_adminsBuilder.Count * AdminSize);
+
+            foreach (ComplexRestrictionBuilder restriction in
+                     _complexRestrictionForwardBuilder)
+            {
+                bodySize += restriction.SizeOf();
+            }
+
+            foreach (ComplexRestrictionBuilder restriction in
+                     _complexRestrictionReverseBuilder)
+            {
+                bodySize += restriction.SizeOf();
+            }
+
+            foreach (EdgeInfoBuilder edgeInfo in _edgeinfoList)
+            {
+                bodySize += edgeInfo.SizeOf();
+            }
+
+            foreach (string text in _textListBuilder)
+            {
+                bodySize += text.Length + 1L;
+            }
+
+            long padding = (8 - (bodySize % 8)) % 8;
+            bodySize += padding +
+                ((long)_laneConnectivityBuilder.Count * LaneConnectivitySize);
+            return checked((int)(GraphTileHeaderSize + bodySize));
+        }
+    }
     /// <summary>
     /// Serializes the tile and writes it to disk under <paramref name="tileDir"/> as an uncompressed
     /// <c>.gph</c> file at the path derived from the tile's GraphId. Faithful port of the disk-writing
@@ -864,12 +917,7 @@ public sealed partial class GraphTileBuilder
 
         string tmp = filename + "_" + Environment.CurrentManagedThreadId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".tmp";
         File.WriteAllBytes(tmp, blob);
-        if (File.Exists(filename))
-        {
-            File.Delete(filename);
-        }
-
-        File.Move(tmp, filename);
+        File.Move(tmp, filename, overwrite: true);
     }
 
     // Edge tuple for sharing edges that have common nodes and edgeindex (orders nodea/nodeb).
@@ -953,7 +1001,7 @@ public sealed partial class GraphTileBuilder
     private static void WriteStruct<T>(Stream output, T value)
         where T : unmanaged
     {
-        Span<byte> buf = stackalloc byte[Marshal.SizeOf<T>()];
+        Span<byte> buf = stackalloc byte[Unsafe.SizeOf<T>()];
         MemoryMarshal.Write(buf, in value);
         output.Write(buf);
     }
