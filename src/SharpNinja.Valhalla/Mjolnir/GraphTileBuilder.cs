@@ -81,7 +81,7 @@ public sealed partial class GraphTileBuilder
     // Text list offset and map.
     private uint _textListOffset;
     private readonly Dictionary<string, uint> _textOffsetMap = new(StringComparer.Ordinal);
-    private readonly List<string> _textListBuilder = new();
+    private readonly List<byte[]> _textListBuilder = new();
 
     // The source tile when deserializing (null for a fresh build). The C++ GraphTileBuilder derives
     // from GraphTile, so methods like edgeinfo(de) read the original tile data; here we keep the
@@ -98,7 +98,7 @@ public sealed partial class GraphTileBuilder
         _headerBuilder.SetGraphid(graphid);
 
         // Not deserializing: create builders for everything.
-        _textListBuilder.Add(string.Empty);
+        _textListBuilder.Add(Array.Empty<byte>());
         _textOffsetMap[string.Empty] = 0;
         _textListOffset = 1;
 
@@ -261,12 +261,13 @@ public sealed partial class GraphTileBuilder
                 width = textList.Length - (int)thisOffset;
             }
 
-            // Keep the bytes for this entry, removing the null terminator (added back in StoreTileData).
-            string entryText = BytesToString(textList, (int)thisOffset, width - 1);
-            _textListBuilder.Add(entryText);
-            if (!_textOffsetMap.ContainsKey(entryText))
+            // Keep the exact bytes for this entry, removing the null terminator (added back in StoreTileData).
+            byte[] entryBytes = textList.AsSpan((int)thisOffset, width - 1).ToArray();
+            string entryKey = TextKey(entryBytes);
+            _textListBuilder.Add(entryBytes);
+            if (!_textOffsetMap.ContainsKey(entryKey))
             {
-                _textOffsetMap[entryText] = thisOffset;
+                _textOffsetMap[entryKey] = thisOffset;
             }
 
             _textListOffset += (uint)(width); // length-of-entry + null terminator
@@ -326,16 +327,7 @@ public sealed partial class GraphTileBuilder
         return v;
     }
 
-    private static string BytesToString(byte[] buffer, int offset, int length)
-    {
-        var sb = new System.Text.StringBuilder(length);
-        for (int i = 0; i < length; i++)
-        {
-            sb.Append((char)buffer[offset + i]);
-        }
-
-        return sb.ToString();
-    }
+    private static string TextKey(ReadOnlySpan<byte> value) => Convert.ToHexString(value);
 
     /// <summary>Gets the header builder. Faithful port of <c>header_builder()</c>.</summary>
     public GraphTileHeader HeaderBuilder => _headerBuilder;
@@ -494,15 +486,37 @@ public sealed partial class GraphTileBuilder
             return 0;
         }
 
-        if (_textOffsetMap.TryGetValue(name, out uint existing))
+        return AddText(System.Text.Encoding.UTF8.GetBytes(name));
+    }
+
+    private uint AddEncodedName(string encodedBytes)
+    {
+        if (string.IsNullOrEmpty(encodedBytes))
+        {
+            return 0;
+        }
+
+        byte[] bytes = GC.AllocateUninitializedArray<byte>(encodedBytes.Length);
+        for (int index = 0; index < encodedBytes.Length; index++)
+        {
+            bytes[index] = checked((byte)encodedBytes[index]);
+        }
+
+        return AddText(bytes);
+    }
+
+    private uint AddText(byte[] bytes)
+    {
+        string key = TextKey(bytes);
+        if (_textOffsetMap.TryGetValue(key, out uint existing))
         {
             return existing;
         }
 
         uint offset = _textListOffset;
-        _textListBuilder.Add(name);
-        _textOffsetMap[name] = _textListOffset;
-        _textListOffset += (uint)(ByteLength(name) + 1);
+        _textListBuilder.Add(bytes);
+        _textOffsetMap[key] = offset;
+        _textListOffset += checked((uint)bytes.Length + 1);
         return offset;
     }
 
@@ -544,7 +558,7 @@ public sealed partial class GraphTileBuilder
                         sign.Type == Sign.Type.JunctionName || sign.Type == Sign.Type.TollName;
                     uint count = (sign.LinguisticStartIndex + sign.LinguisticCount) - 1;
                     uint signOffset =
-                        AddName(ProcessLinguisticHeader(sign.LinguisticStartIndex, count, linguistics, i));
+                        AddEncodedName(ProcessLinguisticHeader(sign.LinguisticStartIndex, count, linguistics, i));
                     _signsBuilder.Add(new Sign(idx, Sign.Type.Linguistic, linguisticOnNode, true, signOffset));
                 }
             }
@@ -681,7 +695,7 @@ public sealed partial class GraphTileBuilder
                     sb.Append(name);
                 }
 
-                var ni = new NameInfo(AddName(encodeTag + sb.ToString()), 0, false, true, 0);
+                var ni = new NameInfo(AddEncodedName(encodeTag + sb.ToString()), 0, false, true, 0);
                 nameInfoList.Add(ni);
                 ++nameCount;
             }
@@ -811,13 +825,9 @@ public sealed partial class GraphTileBuilder
 
         // Write the names.
         _headerBuilder.SetTextlistOffset((uint)(_headerBuilder.EdgeinfoOffset() + edgeInfoSize));
-        foreach (string text in _textListBuilder)
+        foreach (byte[] text in _textListBuilder)
         {
-            for (int i = 0; i < text.Length; i++)
-            {
-                inMem.WriteByte((byte)text[i]);
-            }
-
+            inMem.Write(text);
             inMem.WriteByte(0); // null terminator
         }
 
@@ -892,7 +902,7 @@ public sealed partial class GraphTileBuilder
                 bodySize += edgeInfo.SizeOf();
             }
 
-            foreach (string text in _textListBuilder)
+            foreach (byte[] text in _textListBuilder)
             {
                 bodySize += text.Length + 1L;
             }
@@ -998,9 +1008,6 @@ public sealed partial class GraphTileBuilder
 
         return v;
     }
-
-    // Number of raw bytes a name occupies in the text list (1 byte per char, matching C++ string).
-    private static int ByteLength(string name) => name.Length;
 
     private static void WriteStruct<T>(Stream output, T value)
         where T : unmanaged

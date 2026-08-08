@@ -1,5 +1,6 @@
-// Faithful C# port of Valhalla mjolnir OSMWay.
-// Source: valhalla/mjolnir/osmway.h + src/mjolnir/osmway.cc @ 3.7.0
+// C# port of Valhalla mjolnir OSMWay.
+// Source: valhalla/mjolnir/osmway.h + src/mjolnir/osmway.cc at Valhalla 3.8.3
+// commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5.
 //
 // OSMWay is the normalized result of parsing an OSM way (after the graph.lua tag
 // transform). It carries access flags (per mode, per direction), classification
@@ -7,13 +8,12 @@
 // surface/cyclelane/shoulder attributes, name/ref/destination string indices, and
 // the truck/HGV + ferry + roundabout + oneway + bike-network flags.
 //
-// This port preserves the exact bit-field widths and the exact clamping logic in the
-// .cc setters (set_node_count, set_speed*, set_lanes*). The large linguistic name
-// subsystem (GetNames / AddPronunciations / GetTaggedValues) from osmway.cc depends
-// on UniqueNames + OSMLinguistic + the tile linguistic header and lives in the graph
-// builder slice; it is intentionally out of scope for the OSM front-end parser port.
+// This port preserves the exact bit-field widths and clamping logic in the native
+// setters and retains Valhalla 3.8.3 way-name language and pronunciation records for
+// deterministic graph-tile linguistic tagged values.
 
 using System;
+using System.Collections.Generic;
 
 using SharpNinja.Valhalla.Baldr;
 
@@ -744,4 +744,62 @@ public sealed class OSMWay
     public uint LevelIndex { get; set; }
 
     public uint LevelRefIndex { get; set; }
+
+    private readonly List<OSMLinguisticName> _linguisticNames = new();
+    private readonly List<OSMPronunciation> _pronunciations = new();
+
+    /// <summary>Language-qualified names retained from OSM tags for this way.</summary>
+    public IReadOnlyList<OSMLinguisticName> LinguisticNames => _linguisticNames;
+
+    /// <summary>Pronunciations retained from OSM tags for this way.</summary>
+    public IReadOnlyList<OSMPronunciation> Pronunciations => _pronunciations;
+
+    /// <summary>Adds a language-qualified name using the Valhalla 3.8 linguistic type model.</summary>
+    public void AddLinguisticName(OSMLinguisticType type, Language language, string text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        if (language == Language.None)
+        {
+            throw new ArgumentOutOfRangeException(nameof(language), language, "A linguistic name requires a supported language.");
+        }
+
+        var value = new OSMLinguisticName(type, language, text);
+        if (!_linguisticNames.Contains(value))
+        {
+            _linguisticNames.Add(value);
+        }
+    }
+
+    /// <summary>Adds a pronunciation using the Valhalla 3.8 linguistic type and alphabet model.</summary>
+    public void AddPronunciation(
+        OSMLinguisticType type,
+        Language language,
+        PronunciationAlphabet alphabet,
+        string text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        if (alphabet == PronunciationAlphabet.None)
+        {
+            throw new ArgumentOutOfRangeException(nameof(alphabet), alphabet, "A pronunciation requires a phonetic alphabet.");
+        }
+
+        foreach (string token in text.Split(';'))
+        {
+            int byteLength = System.Text.Encoding.UTF8.GetByteCount(token);
+            if (byteLength > byte.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(text),
+                    byteLength,
+                    "Each pronunciation token cannot exceed 255 UTF-8 bytes.");
+            }
+        }
+
+        var value = new OSMPronunciation(type, language, alphabet, text);
+        if (!_pronunciations.Contains(value))
+        {
+            _pronunciations.Add(value);
+            SetHasPronunciationTags(true);
+        }
+    }
 }

@@ -528,6 +528,64 @@ public class PbfGraphParserTests
     // all regular nodes, ways, and relations. Strings are deduped into a string table.
     // =========================================================================
 
+    [Fact]
+    public void WayLanguageAndPronunciationTags_AreRetainedForGraphGeneration()
+    {
+        var builder = new PbfBuilder();
+        builder.AddNode(1, 41.0, 12.0);
+        builder.AddNode(2, 41.001, 12.001);
+        builder.AddWay(
+            700,
+            new ulong[] { 1, 2 },
+            new()
+            {
+                ["highway"] = "residential",
+                ["name"] = "Murfreesboro Road",
+                ["name:es"] = "Camino Murfreesboro",
+                ["name:pronunciation"] = "mur frees burrow",
+                ["name:es:pronunciation:nt-sampa"] = "kah mee noh",
+                ["ref"] = "US 41",
+                ["ref:en:pronunciation"] = "you ess forty one",
+            });
+
+        (PbfGraphParser parser, OSMData data) = Run(builder);
+        OSMWay way = GetWay(parser, 700);
+
+        Assert.Equal("Murfreesboro Road", data.NameOffsetMap.Name(way.NameIndex));
+        Assert.Equal("US 41", data.NameOffsetMap.Name(way.RefIndex));
+        Assert.Equal("es", data.NameOffsetMap.Name(way.NameLangIndex));
+
+        OSMLinguisticName spanishName = Assert.Single(way.LinguisticNames);
+        Assert.Equal(OSMLinguisticType.Name, spanishName.Type);
+        Assert.Equal(Language.Es, spanishName.Language);
+        Assert.Equal("Camino Murfreesboro", spanishName.Text);
+
+        Assert.Collection(
+            way.Pronunciations.OrderBy(value => value.Type).ThenBy(value => value.Alphabet),
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Name, value.Type);
+                Assert.Equal(Language.None, value.Language);
+                Assert.Equal(PronunciationAlphabet.Ipa, value.Alphabet);
+                Assert.Equal("mur frees burrow", value.Text);
+            },
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Name, value.Type);
+                Assert.Equal(Language.Es, value.Language);
+                Assert.Equal(PronunciationAlphabet.NtSampa, value.Alphabet);
+                Assert.Equal("kah mee noh", value.Text);
+            },
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Ref, value.Type);
+                Assert.Equal(Language.En, value.Language);
+                Assert.Equal(PronunciationAlphabet.Ipa, value.Alphabet);
+                Assert.Equal("you ess forty one", value.Text);
+            });
+        Assert.True(way.HasPronunciationTags());
+    }
+
     private sealed class PbfBuilder
     {
         private readonly List<(ulong id, double lat, double lon, Dictionary<string, string> tags)> _nodes = new();

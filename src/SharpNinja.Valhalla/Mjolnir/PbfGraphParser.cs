@@ -463,13 +463,9 @@ public sealed class PbfGraphParser
             _access.Add(_osmAccess);
         }
 
-        // PORT-NOTE: store the structural name/ref indices on the way (C++ way_.set_name_index /
-        // set_ref_index at the end of way(); pbfgraphparser.cc ~L3165). Without this every built edge is
-        // "unnamed" because GraphBuilder.GetNames reads w.NameIndex / w.RefIndex. The deferred
-        // linguistic language-record indices stay at their defaults. Empty strings map to index 0 (the
-        // canonical empty entry), so unset name/ref leave the indices at 0 exactly as before.
-        _way.NameIndex = _osmdata.NameOffsetMap.Index(_wayName);
-        _way.RefIndex = _osmdata.NameOffsetMap.Index(_wayRef);
+        // Populate structural names plus Valhalla 3.8 language and pronunciation records after all
+        // transformed tags have been processed. Empty structural values retain index zero.
+        OSMWayLinguisticTagParser.Apply(_way, tags, _osmdata.NameOffsetMap);
 
         _ways.Add(_way);
     }
