@@ -1,9 +1,8 @@
 // Faithful C# port of Valhalla mjolnir graphtilebuilder.h + src/mjolnir/graphtilebuilder.cc
 // @ 3.8.3 commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5
 // (the WRITE side; the build/construct path plus the deserialize-existing-tile path + complex
-// restriction serialization used by the RestrictionBuilder - excludes transit/bss/elevation/
-// predicted-speed updates, JSON, and bin edges, which are out of scope for the auto/truck graph
-// build).
+// restriction serialization used by the RestrictionBuilder, plus predicted-speed profile updates.
+// Transit, bike-share, elevation, JSON, and bin-edge construction remain separate generation stages.
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/graphtilebuilder.h
 //   F:/github/valhalla/src/mjolnir/graphtilebuilder.cc
@@ -26,6 +25,8 @@
 //   [text list]            (null-terminated strings)
 //   [padding to 8-byte boundary]
 //   [LaneConnectivity[]]    (24 bytes each)       - sorted
+//   [predicted-speed offsets] (4 bytes per directed edge, when profiles exist)
+//   [predicted-speed profiles] (200 int16 coefficients per unique profile)
 
 using System;
 using System.Collections.Generic;
@@ -67,6 +68,12 @@ public sealed partial class GraphTileBuilder
     private readonly Dictionary<string, ulong> _adminInfoOffsetMap = new(StringComparer.Ordinal);
     private readonly List<TurnLanes> _turnlanesBuilder = new();
     private readonly List<LaneConnectivity> _laneConnectivityBuilder = new();
+
+    // Historical/predicted speed profiles. The offset list has one entry per directed edge when
+    // profiles are present; profile offsets are int16 coefficient indexes, matching Valhalla 3.8.3.
+    private readonly List<uint> _speedProfileOffsets = new();
+    private readonly List<short> _speedProfiles = new();
+    private readonly Dictionary<ulong, List<uint>> _speedProfileIndex = new();
 
     // The forward / reverse complex restriction lists (empty in the initial build; populated by the
     // RestrictionBuilder over a deserialized tile).
@@ -276,6 +283,42 @@ public sealed partial class GraphTileBuilder
         // Lane connectivity.
         _laneConnectivityBuilder.AddRange(tile.GetAllLaneConnectivity());
 
+        // Historical/predicted speed profiles. Preserve existing profiles when a tile is
+        // deserialized for a later mutation stage.
+        if (tile.Header().PredictedspeedsCount() > 0)
+        {
+            uint[] offsets = tile.CopyPredictedSpeedOffsets();
+            short[] profiles = tile.CopyPredictedSpeedProfiles();
+            int expectedProfileValues = checked(
+                (int)(tile.Header().PredictedspeedsCount() *
+                      PredictedSpeedConstants.CoefficientCount));
+            if (offsets.Length != edgeCount || profiles.Length != expectedProfileValues)
+            {
+                throw new InvalidDataException(
+                    "The predicted-speed section does not match the tile header.");
+            }
+
+            _speedProfileOffsets.AddRange(offsets);
+            _speedProfiles.AddRange(profiles);
+            for (int edgeIndex = 0; edgeIndex < _directedEdgesBuilder.Count; edgeIndex++)
+            {
+                if (!_directedEdgesBuilder[edgeIndex].HasPredictedSpeed)
+                {
+                    continue;
+                }
+
+                uint profileOffset = offsets[edgeIndex];
+                if (profileOffset + PredictedSpeedConstants.CoefficientCount >
+                    profiles.Length)
+                {
+                    throw new InvalidDataException(
+                        $"Predicted-speed offset {profileOffset} is outside the profile section.");
+                }
+
+                IndexPredictedSpeedProfile(profileOffset);
+            }
+        }
+
         // Complex restrictions (forward / reverse).
         _complexRestrictionForwardBuilder.AddRange(
             DeserializeRestrictions(tile.ComplexRestrictionForwardRaw()));
@@ -328,6 +371,111 @@ public sealed partial class GraphTileBuilder
     }
 
     private static string TextKey(ReadOnlySpan<byte> value) => Convert.ToHexString(value);
+
+    /// <summary>
+    /// Adds a compressed historical/predicted speed profile for a directed edge. Duplicate
+    /// coefficient arrays share one profile offset, matching Valhalla 3.8.3.
+    /// </summary>
+    public void AddPredictedSpeed(
+        uint directedEdgeIndex,
+        ReadOnlySpan<short> coefficients,
+        int predictedCountHint = 0)
+    {
+        if (directedEdgeIndex >= _directedEdgesBuilder.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(directedEdgeIndex),
+                "GraphTileBuilder AddPredictedSpeed index is out of bounds.");
+        }
+
+        if (coefficients.Length != PredictedSpeedConstants.CoefficientCount)
+        {
+            throw new ArgumentException(
+                $"A predicted-speed profile requires exactly " +
+                $"{PredictedSpeedConstants.CoefficientCount} coefficients.",
+                nameof(coefficients));
+        }
+
+        if (_speedProfileOffsets.Count == 0)
+        {
+            _speedProfileOffsets.AddRange(
+                Enumerable.Repeat(0u, _directedEdgesBuilder.Count));
+            if (predictedCountHint > 0)
+            {
+                _speedProfiles.EnsureCapacity(
+                    checked(predictedCountHint *
+                            (int)PredictedSpeedConstants.CoefficientCount));
+                _speedProfileIndex.EnsureCapacity(predictedCountHint);
+            }
+        }
+        else if (_speedProfileOffsets.Count != _directedEdgesBuilder.Count)
+        {
+            throw new InvalidOperationException(
+                "Directed edges cannot be added after predicted-speed profiles are indexed.");
+        }
+
+        ulong hash = ComputePredictedSpeedHash(coefficients);
+        if (_speedProfileIndex.TryGetValue(hash, out List<uint>? offsets))
+        {
+            ReadOnlySpan<short> storedProfiles = CollectionsMarshal.AsSpan(_speedProfiles);
+            foreach (uint profileOffset in offsets)
+            {
+                if (storedProfiles.Slice(
+                        checked((int)profileOffset),
+                        checked((int)PredictedSpeedConstants.CoefficientCount))
+                    .SequenceEqual(coefficients))
+                {
+                    _speedProfileOffsets[(int)directedEdgeIndex] = profileOffset;
+                    return;
+                }
+            }
+        }
+
+        uint newOffset = checked((uint)_speedProfiles.Count);
+        foreach (short coefficient in coefficients)
+        {
+            _speedProfiles.Add(coefficient);
+        }
+
+        _speedProfileOffsets[(int)directedEdgeIndex] = newOffset;
+        IndexPredictedSpeedProfile(newOffset, hash);
+    }
+
+    private void IndexPredictedSpeedProfile(uint profileOffset)
+    {
+        ReadOnlySpan<short> profile = CollectionsMarshal.AsSpan(_speedProfiles).Slice(
+            checked((int)profileOffset),
+            checked((int)PredictedSpeedConstants.CoefficientCount));
+        IndexPredictedSpeedProfile(profileOffset, ComputePredictedSpeedHash(profile));
+    }
+
+    private void IndexPredictedSpeedProfile(uint profileOffset, ulong hash)
+    {
+        if (!_speedProfileIndex.TryGetValue(hash, out List<uint>? offsets))
+        {
+            offsets = new List<uint>();
+            _speedProfileIndex.Add(hash, offsets);
+        }
+
+        if (!offsets.Contains(profileOffset))
+        {
+            offsets.Add(profileOffset);
+        }
+    }
+
+    private static ulong ComputePredictedSpeedHash(ReadOnlySpan<short> coefficients)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        ulong hash = offsetBasis;
+        foreach (short coefficient in coefficients)
+        {
+            hash ^= unchecked((ushort)coefficient);
+            hash *= prime;
+        }
+
+        return hash;
+    }
 
     /// <summary>Gets the header builder. Faithful port of <c>header_builder()</c>.</summary>
     public GraphTileHeader HeaderBuilder => _headerBuilder;
@@ -848,10 +996,40 @@ public sealed partial class GraphTileBuilder
             WriteStruct(inMem, lc);
         }
 
-        // Set the end offset.
-        _headerBuilder.SetEndOffset(
+        uint laneConnectivityEnd =
             (uint)(_headerBuilder.LaneConnectivityOffset() +
-                   (_laneConnectivityBuilder.Count * LaneConnectivitySize)));
+                   (_laneConnectivityBuilder.Count * LaneConnectivitySize));
+
+        if (_speedProfiles.Count > 0)
+        {
+            if (_speedProfileOffsets.Count != _directedEdgesBuilder.Count ||
+                _speedProfiles.Count % PredictedSpeedConstants.CoefficientCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Predicted-speed indexes and profiles are inconsistent.");
+            }
+
+            _headerBuilder.SetPredictedspeedsOffset(laneConnectivityEnd);
+            _headerBuilder.SetPredictedspeedsCount(
+                checked((uint)_speedProfiles.Count /
+                        PredictedSpeedConstants.CoefficientCount));
+            foreach (uint offset in _speedProfileOffsets)
+            {
+                WriteStruct(inMem, offset);
+            }
+
+            foreach (short coefficient in _speedProfiles)
+            {
+                WriteStruct(inMem, coefficient);
+            }
+        }
+        else
+        {
+            _headerBuilder.SetPredictedspeedsOffset(0);
+            _headerBuilder.SetPredictedspeedsCount(0);
+        }
+
+        _headerBuilder.SetEndOffset(checked((uint)inMem.Position));
 
         if (inMem.Position != blob.Length)
         {
@@ -910,6 +1088,14 @@ public sealed partial class GraphTileBuilder
             long padding = (8 - (bodySize % 8)) % 8;
             bodySize += padding +
                 ((long)_laneConnectivityBuilder.Count * LaneConnectivitySize);
+
+            if (_speedProfiles.Count > 0)
+            {
+                bodySize +=
+                    ((long)_directedEdgesBuilder.Count * sizeof(uint)) +
+                    ((long)_speedProfiles.Count * sizeof(short));
+            }
+
             return checked((int)(GraphTileHeaderSize + bodySize));
         }
     }

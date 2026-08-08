@@ -243,6 +243,10 @@ public sealed class PredictedSpeeds
     /// </summary>
     public void SetProfiles(short[] profiles) => _profiles = profiles;
 
+    internal uint[] CopyOffsets() => _offset?.ToArray() ?? Array.Empty<uint>();
+
+    internal short[] CopyProfiles() => _profiles?.ToArray() ?? Array.Empty<short>();
+
     /// <summary>
     /// Get the speed (KPH) for the given directed edge index and seconds-of-week (local time).
     /// Faithful port of <c>PredictedSpeeds::speed</c>.

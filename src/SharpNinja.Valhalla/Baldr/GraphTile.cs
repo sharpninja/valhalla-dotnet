@@ -445,6 +445,29 @@ public sealed class GraphTile : IGraphTilePtr
     public GraphTileHeader Header() => _header;
 
     /// <summary>
+    /// Returns the historical/predicted speed for a directed edge and local second of week.
+    /// </summary>
+    public float PredictedSpeed(uint directedEdgeIndex, uint secondsOfWeek)
+    {
+        if (directedEdgeIndex >= _header.Directededgecount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(directedEdgeIndex));
+        }
+
+        if (!DirectedEdge((int)directedEdgeIndex).HasPredictedSpeed)
+        {
+            throw new InvalidOperationException(
+                $"Directed edge {directedEdgeIndex} has no predicted speed profile.");
+        }
+
+        return _predictedSpeeds.Speed(directedEdgeIndex, secondsOfWeek);
+    }
+
+    internal uint[] CopyPredictedSpeedOffsets() => _predictedSpeeds.CopyOffsets();
+
+    internal short[] CopyPredictedSpeedProfiles() => _predictedSpeeds.CopyProfiles();
+
+    /// <summary>
     /// Returns a fresh copy of the entire tile image (header through end offset). Used by the
     /// mjolnir edge binner to re-emit the tile with an inserted bin section (mirrors the C++
     /// <c>GraphTileBuilder::AddBins</c> which reads the raw tile bytes around the bin section).

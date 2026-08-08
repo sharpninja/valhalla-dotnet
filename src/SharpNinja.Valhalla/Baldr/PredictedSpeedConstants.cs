@@ -1,4 +1,5 @@
-// Faithful C# port of the predicted-speed constants from Valhalla baldr @ 3.7.0.
+// Faithful C# port of the predicted-speed constants from Valhalla baldr @ 3.8.3
+// commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5.
 // Source: valhalla/baldr/predictedspeeds.h
 //
 // These compile-time constants drive the DCT-II / DCT-III speed compression and the

@@ -5,9 +5,9 @@
 //     share one EdgeInfo), name / tagged-value / mean-elevation / speed-limit round-trip through the
 //     Baldr GraphTile reader, proving byte compatibility of the written tile.
 //
-// EXCLUDED (out of scope): TestAddBins (bin edges), TestDuplicatePredictedSpeeds /
-// TestDuplicatePredictedSpeedSmallHint (predicted speeds), TestBinEdges (BinEdges) - those exercise
-// surfaces excluded from the auto/truck on-device tile build.
+// Predicted-speed writer parity is covered by PredictedSpeedGenerationParityTests.
+// EXCLUDED (out of scope here): TestAddBins / TestBinEdges; bin construction is covered by the
+// dedicated EdgeBinner parity suite.
 
 using System.Collections.Generic;
 using System.Linq;
