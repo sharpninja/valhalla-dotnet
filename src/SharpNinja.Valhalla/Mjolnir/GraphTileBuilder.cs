@@ -51,6 +51,11 @@ public sealed partial class GraphTileBuilder
     private const int DirectedEdgeSize = DirectedEdge.SizeOf;        // 48
     private const int DirectedEdgeExtSize = DirectedEdgeExt.SizeOf;  // 8
     private const int AccessRestrictionSize = 16;
+    private const int TransitDepartureSize = 24;
+    private const int TransitStopSize = 8;
+    private const int TransitRouteSize = 40;
+    private const int TransitScheduleSize = 16;
+    private const int TransitTransferSize = 12;
     private const int SignSize = 8;
     private const int TurnLanesSize = 8;
     private const int AdminSize = 16;
@@ -63,6 +68,11 @@ public sealed partial class GraphTileBuilder
     private readonly List<DirectedEdgeExt> _directedEdgesExtBuilder = new();
     private readonly List<NodeTransition> _transitionsBuilder = new();
     private readonly List<AccessRestriction> _accessRestrictionBuilder = new();
+    private readonly List<TransitDeparture> _departuresBuilder = new();
+    private readonly List<TransitStop> _transitStopsBuilder = new();
+    private readonly List<TransitRoute> _transitRoutesBuilder = new();
+    private readonly List<TransitSchedule> _transitSchedulesBuilder = new();
+    private readonly List<TransitTransfer> _transitTransfersBuilder = new();
     private readonly List<Sign> _signsBuilder = new();
     private readonly List<Admin> _adminsBuilder = new();
     private readonly Dictionary<string, ulong> _adminInfoOffsetMap = new(StringComparer.Ordinal);
@@ -168,6 +178,35 @@ public sealed partial class GraphTileBuilder
 
         // Create access restriction list.
         _accessRestrictionBuilder.AddRange(tile.GetAllAccessRestrictions());
+
+        // Copy transit records and preserve every transit-owned text-list offset.
+        foreach (TransitDeparture departure in tile.GetTransitDepartures())
+        {
+            _departuresBuilder.Add(departure);
+            nameOffsets.Add(departure.HeadsignOffset);
+        }
+
+        foreach (TransitStop stop in tile.GetTransitStops())
+        {
+            _transitStopsBuilder.Add(stop);
+            nameOffsets.Add(stop.OneStopOffset);
+            nameOffsets.Add(stop.NameOffset);
+        }
+
+        foreach (TransitRoute route in tile.GetTransitRoutes())
+        {
+            _transitRoutesBuilder.Add(route);
+            nameOffsets.Add(route.OneStopOffset);
+            nameOffsets.Add(route.OperatedByOneStopIdOffset);
+            nameOffsets.Add(route.OperatedByNameOffset);
+            nameOffsets.Add(route.OperatedByWebsiteOffset);
+            nameOffsets.Add(route.ShortNameOffset);
+            nameOffsets.Add(route.LongNameOffset);
+            nameOffsets.Add(route.DescriptionOffset);
+        }
+
+        _transitSchedulesBuilder.AddRange(tile.GetTransitSchedules());
+        _transitTransfersBuilder.AddRange(tile.GetTransitTransfers());
 
         // Create sign builders and add their text offsets to the set.
         foreach (Sign sign in tile.GetAllSigns())
@@ -495,6 +534,21 @@ public sealed partial class GraphTileBuilder
     /// transitions and to copy transitions from a base tile).
     /// </summary>
     public List<NodeTransition> Transitions => _transitionsBuilder;
+
+    /// <summary>Gets the mutable transit departure list.</summary>
+    public List<TransitDeparture> Departures => _departuresBuilder;
+
+    /// <summary>Gets the mutable transit stop list.</summary>
+    public List<TransitStop> TransitStops => _transitStopsBuilder;
+
+    /// <summary>Gets the mutable transit route list.</summary>
+    public List<TransitRoute> TransitRoutes => _transitRoutesBuilder;
+
+    /// <summary>Gets the mutable transit schedule list.</summary>
+    public List<TransitSchedule> TransitSchedules => _transitSchedulesBuilder;
+
+    /// <summary>Gets the mutable transit transfer list.</summary>
+    public List<TransitTransfer> TransitTransfers => _transitTransfersBuilder;
 
     /// <summary>Gets the current list of signs (read-only view).</summary>
     public IReadOnlyList<Sign> Signs => _signsBuilder;
@@ -901,12 +955,36 @@ public sealed partial class GraphTileBuilder
             WriteStruct(inMem, ar);
         }
 
-        // Transit departures / stops / routes / schedules are excluded (always 0).
-        _headerBuilder.SetDeparturecount(0);
-        _headerBuilder.SetStopcount(0);
-        _headerBuilder.SetRoutecount(0);
-        _headerBuilder.SetSchedulecount(0);
-        _headerBuilder.SetTransfercount(0);
+        // Write packed Valhalla 3.8.3 transit records in their canonical section order.
+        _headerBuilder.SetDeparturecount((uint)_departuresBuilder.Count);
+        foreach (TransitDeparture departure in _departuresBuilder)
+        {
+            WriteStruct(inMem, departure);
+        }
+
+        _headerBuilder.SetStopcount((uint)_transitStopsBuilder.Count);
+        foreach (TransitStop stop in _transitStopsBuilder)
+        {
+            WriteStruct(inMem, stop);
+        }
+
+        _headerBuilder.SetRoutecount((uint)_transitRoutesBuilder.Count);
+        foreach (TransitRoute route in _transitRoutesBuilder)
+        {
+            WriteStruct(inMem, route);
+        }
+
+        _headerBuilder.SetSchedulecount((uint)_transitSchedulesBuilder.Count);
+        foreach (TransitSchedule schedule in _transitSchedulesBuilder)
+        {
+            WriteStruct(inMem, schedule);
+        }
+
+        _headerBuilder.SetTransfercount((uint)_transitTransfersBuilder.Count);
+        foreach (TransitTransfer transfer in _transitTransfersBuilder)
+        {
+            WriteStruct(inMem, transfer);
+        }
 
         // Write the signs (stable sort by index then type).
         StableSortSigns(_signsBuilder);
@@ -939,6 +1017,11 @@ public sealed partial class GraphTileBuilder
                    (_directedEdgesBuilder.Count * DirectedEdgeSize) +
                    (_directedEdgesExtBuilder.Count * DirectedEdgeExtSize) +
                    (_accessRestrictionBuilder.Count * AccessRestrictionSize) +
+                   (_departuresBuilder.Count * TransitDepartureSize) +
+                   (_transitStopsBuilder.Count * TransitStopSize) +
+                   (_transitRoutesBuilder.Count * TransitRouteSize) +
+                   (_transitSchedulesBuilder.Count * TransitScheduleSize) +
+                   (_transitTransfersBuilder.Count * TransitTransferSize) +
                    (_signsBuilder.Count * SignSize) +
                    (_turnlanesBuilder.Count * TurnLanesSize) +
                    (_adminsBuilder.Count * AdminSize));
@@ -1059,6 +1142,11 @@ public sealed partial class GraphTileBuilder
                 ((long)_directedEdgesBuilder.Count * DirectedEdgeSize) +
                 ((long)extendedEdgeCount * DirectedEdgeExtSize) +
                 ((long)_accessRestrictionBuilder.Count * AccessRestrictionSize) +
+                ((long)_departuresBuilder.Count * TransitDepartureSize) +
+                ((long)_transitStopsBuilder.Count * TransitStopSize) +
+                ((long)_transitRoutesBuilder.Count * TransitRouteSize) +
+                ((long)_transitSchedulesBuilder.Count * TransitScheduleSize) +
+                ((long)_transitTransfersBuilder.Count * TransitTransferSize) +
                 ((long)_signsBuilder.Count * SignSize) +
                 ((long)_turnlanesBuilder.Count * TurnLanesSize) +
                 ((long)_adminsBuilder.Count * AdminSize);

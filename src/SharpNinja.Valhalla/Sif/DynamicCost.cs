@@ -28,14 +28,7 @@ using ThorEdgeSet = SharpNinja.Valhalla.Thor.EdgeSet;
 
 namespace SharpNinja.Valhalla.Sif;
 
-/// <summary>
-/// Transit departure record placeholder. The full <c>valhalla::baldr::TransitDeparture</c> belongs
-/// to a later (transit) port slice; only the type is referenced by the schedule-based EdgeCost
-/// signature here. PORT-NOTE: stub kept minimal so the foundation costing signatures compile.
-/// </summary>
-public sealed class TransitDeparture
-{
-}
+
 
 /// <summary>
 /// Limited graph reader placeholder. The full <c>valhalla::baldr::GraphReader::LimitedGraphReader</c>

@@ -1,0 +1,5 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,wheelchair_boarding,platform_code
+STATION1,Place d'Armes,43.729900,7.417000,1,,1,
+P1,Place d'Armes Bay A,43.729950,7.417050,0,STATION1,1,A
+STATION2,Casino Square,43.739000,7.426200,1,,1,
+P2,Casino Square Bay B,43.739050,7.426250,0,STATION2,1,B
