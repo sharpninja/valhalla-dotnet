@@ -594,8 +594,9 @@ public sealed class GraphBuilder
 
             graphtile.AddTileCreationDate(tileCreationDate);
             graphtile.HeaderBuilder.SetDatasetId(osmdata.MaxChangesetId);
-            graphtile.HeaderBuilder.SetChecksum(osmdata.PbfChecksum);
 
+            // Valhalla 3.8.3 hashes the serialized tile body, then stamps one build ID after all
+            // tiles have been serialized. The former PBF-wide checksum is not a tile checksum.
             // Set the base lat,lon of the tile.
             uint id = tileId.Tileid();
             PointLL baseLl = tiling.Base((int)id);
@@ -1104,6 +1105,7 @@ public sealed class GraphBuilder
             result[tileId] = graphtile.StoreTileData();
         }
 
+        GraphTileChecksum.StampTilesetBuildId(result.Values.ToArray());
         return result;
     }
 

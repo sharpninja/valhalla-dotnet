@@ -1,4 +1,5 @@
-// Faithful C# port of Valhalla mjolnir graphtilebuilder.h + src/mjolnir/graphtilebuilder.cc @ 3.7.0
+// Faithful C# port of Valhalla mjolnir graphtilebuilder.h + src/mjolnir/graphtilebuilder.cc
+// @ 3.8.3 commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5
 // (the WRITE side; the build/construct path plus the deserialize-existing-tile path + complex
 // restriction serialization used by the RestrictionBuilder - excludes transit/bss/elevation/
 // predicted-speed updates, JSON, and bin edges, which are out of scope for the auto/truck graph
@@ -848,6 +849,9 @@ public sealed partial class GraphTileBuilder
                 $"Graph tile serialization wrote {inMem.Position} of {blob.Length} bytes.");
         }
 
+        ulong buildIdBits = (ulong)_headerBuilder.BuildId() << GraphTileHeader.TileHashBits;
+        ulong tileHash = GraphTileChecksum.ComputeTileHash(blob.AsSpan(GraphTileHeaderSize));
+        _headerBuilder.SetRawChecksum(buildIdBits | tileHash);
         _headerBuilder.AsSpan().CopyTo(blob);
         return blob;
     }

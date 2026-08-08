@@ -1,5 +1,5 @@
 // Faithful C# port of Valhalla baldr graphtileheader.h + src/baldr/graphtileheader.cc
-// (valhalla @ 3.7.0).
+// (valhalla @ 3.8.3 commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5).
 // Sources:
 //   F:/github/valhalla/valhalla/baldr/graphtileheader.h
 //   F:/github/valhalla/src/baldr/graphtileheader.cc
@@ -42,7 +42,8 @@
 //   [216..219]  lane_connectivity_offset_           : uint32
 //   [220..223]  predictedspeeds_offset_             : uint32
 //   [224..227]  tile_size_                          : uint32
-//   [228..271]  empty_slots_  : uint32[11]
+//   [228..231]  boundingcircles_offset_             : uint32
+//   [232..271]  empty_slots_  : uint32[10]
 // Total = 272 bytes.
 // ---------------------------------------------------------------------------------------
 //
@@ -73,7 +74,13 @@ public sealed class GraphTileHeader
     public const int HeaderSize = 272;
 
     /// <summary>Number of expansion slots remaining in this tile. Mirrors C++ <c>kEmptySlots</c>.</summary>
-    public const int EmptySlots = 11;
+    public const int EmptySlots = 10;
+
+    /// <summary>Number of low checksum bits reserved for the reproducible per-tile data hash.</summary>
+    public const int TileHashBits = 48;
+
+    /// <summary>Mask for the reproducible per-tile data hash stored in the checksum field.</summary>
+    public const ulong TileHashMask = (1UL << TileHashBits) - 1UL;
 
     /// <summary>Maximum size of the version string. Mirrors C++ <c>kMaxVersionSize</c>.</summary>
     public const int MaxVersionSize = 16;
@@ -115,7 +122,8 @@ public sealed class GraphTileHeader
     private const int OffLaneConnectivity = 216;
     private const int OffPredictedSpeeds = 220;
     private const int OffTileSize = 224;
-    private const int OffEmptySlots = 228; // uint32[11]
+    private const int OffBoundingCircles = 228;
+    private const int OffEmptySlots = 232; // uint32[10]
 
     // The 272-byte on-disk image. All accessors read/write directly through this buffer.
     private readonly byte[] _buf = new byte[HeaderSize];
@@ -447,11 +455,32 @@ public sealed class GraphTileHeader
 
     // ------------------------------ checksum (formerly spareword1_) ------------------------------
 
-    /// <summary>Get the 64-bit checksum hash of the tile's input.</summary>
-    public ulong Checksum() => ReadWord(OffChecksum);
+    /// <summary>
+    /// Gets the raw 64-bit checksum field containing the build ID in the high 16 bits and
+    /// the reproducible per-tile data hash in the low 48 bits.
+    /// </summary>
+    public ulong RawChecksum() => ReadWord(OffChecksum);
 
-    /// <summary>Sets the 64-bit checksum hash of the tile's input.</summary>
-    public void SetChecksum(ulong checksum) => WriteWord(OffChecksum, checksum);
+    /// <summary>Sets the raw 64-bit packed checksum field.</summary>
+    public void SetRawChecksum(ulong checksum) => WriteWord(OffChecksum, checksum);
+
+    /// <summary>Gets the reproducible 48-bit data hash for this tile.</summary>
+    public ulong TileChecksum() => RawChecksum() & TileHashMask;
+
+    /// <summary>Gets the 16-bit tileset build ID shared by every tile in a build.</summary>
+    public ushort BuildId() => (ushort)(RawChecksum() >> TileHashBits);
+
+    /// <summary>
+    /// Gets the raw packed checksum field. Preserved as a source-compatible alias for callers
+    /// compiled against the 3.7-era API.
+    /// </summary>
+    public ulong Checksum() => RawChecksum();
+
+    /// <summary>
+    /// Sets the raw packed checksum field. Preserved as a source-compatible alias for callers
+    /// compiled against the 3.7-era API.
+    /// </summary>
+    public void SetChecksum(ulong checksum) => SetRawChecksum(checksum);
 
     // ------------------------------ variable-section offsets ------------------------------
 
@@ -502,6 +531,29 @@ public sealed class GraphTileHeader
 
     /// <summary>Sets the offset (bytes) to the end of the tile.</summary>
     public void SetEndOffset(uint offset) => WriteU32(OffTileSize, offset);
+
+    /// <summary>
+    /// Returns whether this tile contains bounding-circle records. Early Valhalla 3.x tiles
+    /// initialized unused offset slots to the complete tile size, which must remain absent.
+    /// </summary>
+    public bool HasBoundingCircles()
+    {
+        uint offset = ReadU32(OffBoundingCircles);
+        return offset != 0 && offset != EndOffset();
+    }
+
+    /// <summary>
+    /// Gets the bounding-circle section offset, normalizing the early 3.x unused-slot sentinel
+    /// equal to the complete tile size to zero.
+    /// </summary>
+    public uint BoundingCircleOffset()
+    {
+        uint offset = ReadU32(OffBoundingCircles);
+        return offset == EndOffset() ? 0u : offset;
+    }
+
+    /// <summary>Sets the offset to the start of the bounding-circle section.</summary>
+    public void SetBoundingCircleOffset(uint offset) => WriteU32(OffBoundingCircles, offset);
 
     // ------------------------------ edge bins ------------------------------
 
