@@ -1,3 +1,4 @@
+using SharpNinja.Valhalla.Generations;
 using SharpNinja.Valhalla.Traffic.Routing;
 using SharpNinja.Valhalla.Traffic.Tiles;
 
@@ -39,6 +40,9 @@ public sealed record OsmRouteRequest(
 
 	/// <summary>Single invariant departure instant used throughout traffic-aware routing.</summary>
 	public DateTimeOffset? DepartureTimeUtc { get; init; }
+
+	/// <summary>Optional exact distributed generation set pinned for the complete route acquisition.</summary>
+	public ValhallaGenerationLease? GenerationLease { get; init; }
 }
 
 public sealed record OsmTruckRouteOptions(
@@ -57,6 +61,9 @@ public sealed record OsmRouteResult(
 {
 	/// <summary>Typed snapshot failure when traffic-aware routing cannot be claimed safely.</summary>
 	public TrafficSnapshotFailure? TrafficSnapshotFailure { get; init; }
+
+	/// <summary>Exact immutable base/overlay generation evidence used by the route.</summary>
+	public ValhallaRouteGenerationStamp? GenerationStamp { get; init; }
 
 	public static OsmRouteResult Failure(string error) => new(Array.Empty<OsmRouteCandidate>(), error);
 
