@@ -480,6 +480,35 @@ public sealed partial class GraphTileBuilder
         IndexPredictedSpeedProfile(newOffset, hash);
     }
 
+    /// <summary>
+    /// Reorders predicted-speed offsets after a mutation stage rebuilds directed-edge indexes.
+    /// New edges use a negative source index and receive an empty offset because they do not carry
+    /// predicted speed data.
+    /// </summary>
+    public void RemapPredictedSpeedOffsets(IReadOnlyList<int> sourceEdgeIndexes)
+    {
+        ArgumentNullException.ThrowIfNull(sourceEdgeIndexes);
+        if (_speedProfileOffsets.Count == 0)
+        {
+            return;
+        }
+
+        uint[] current = _speedProfileOffsets.ToArray();
+        _speedProfileOffsets.Clear();
+        _speedProfileOffsets.EnsureCapacity(sourceEdgeIndexes.Count);
+        foreach (int sourceIndex in sourceEdgeIndexes)
+        {
+            if (sourceIndex < 0)
+            {
+                _speedProfileOffsets.Add(0);
+                continue;
+            }
+
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(sourceIndex, current.Length);
+            _speedProfileOffsets.Add(current[sourceIndex]);
+        }
+    }
+
     private void IndexPredictedSpeedProfile(uint profileOffset)
     {
         ReadOnlySpan<short> profile = CollectionsMarshal.AsSpan(_speedProfiles).Slice(
@@ -561,6 +590,22 @@ public sealed partial class GraphTileBuilder
 
     /// <summary>Gets the current list of access restrictions (read-only view).</summary>
     public IReadOnlyList<AccessRestriction> AccessRestrictions => _accessRestrictionBuilder;
+
+    /// <summary>Writes back a mutated sign builder at the index.</summary>
+    public void SetSignBuilder(int index, Sign sign)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, _signsBuilder.Count);
+        _signsBuilder[index] = sign;
+    }
+
+    /// <summary>Writes back a mutated access-restriction builder at the index.</summary>
+    public void SetAccessRestrictionBuilder(int index, AccessRestriction restriction)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+            index,
+            _accessRestrictionBuilder.Count);
+        _accessRestrictionBuilder[index] = restriction;
+    }
 
     /// <summary>Gets the admin builder at the given index. Faithful port of <c>admins_builder(idx)</c>.</summary>
     public Admin AdminsBuilder(int idx)
@@ -853,7 +898,7 @@ public sealed partial class GraphTileBuilder
 
                 if (!string.IsNullOrEmpty(name))
                 {
-                    var info = new NameInfo(AddName(name), 0, false, true, 0);
+                    var info = new NameInfo(AddEncodedName(name), 0, false, true, 0);
                     nameInfoList.Add(info);
                     ++nameCount;
                 }
