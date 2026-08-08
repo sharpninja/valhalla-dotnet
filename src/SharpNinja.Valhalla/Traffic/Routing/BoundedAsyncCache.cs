@@ -14,6 +14,7 @@ internal sealed class BoundedAsyncCache<TKey, TValue> : IDisposable
     private int _activeOperations;
     private int _disposed;
     private int _disposedEntryResourceCount;
+    private int _entryResourceCount;
     private int _infrastructureDisposed;
 
     public BoundedAsyncCache(
@@ -133,7 +134,8 @@ internal sealed class BoundedAsyncCache<TKey, TValue> : IDisposable
                         entry = new Entry(
                             key,
                             token => BuildWithAdmissionAsync(factory, token),
-                            () => Interlocked.Increment(ref _disposedEntryResourceCount));
+                            OnEntryCancellationDisposed);
+                        Interlocked.Increment(ref _entryResourceCount);
                         entry.WaiterCount = 1;
                         _entries.Add(key, entry);
                         entry.FifoNode = _fifo.AddLast(entry);
@@ -450,10 +452,18 @@ internal sealed class BoundedAsyncCache<TKey, TValue> : IDisposable
         }
     }
 
+    private void OnEntryCancellationDisposed()
+    {
+        Interlocked.Increment(ref _disposedEntryResourceCount);
+        Interlocked.Decrement(ref _entryResourceCount);
+        TryDisposeInfrastructure();
+    }
+
     private void TryDisposeInfrastructure()
     {
         if (Volatile.Read(ref _disposed) == 0 ||
-            Volatile.Read(ref _activeOperations) != 0)
+            Volatile.Read(ref _activeOperations) != 0 ||
+            Volatile.Read(ref _entryResourceCount) != 0)
         {
             return;
         }
