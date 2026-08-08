@@ -14,6 +14,10 @@
 
   <ItemGroup>
     <PackageReference Include="K4os.Compression.LZ4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="NetTopologySuite" />
+    <PackageReference Include="NetTopologySuite.IO.SpatiaLite" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
   </ItemGroup>
 
   <ItemGroup>

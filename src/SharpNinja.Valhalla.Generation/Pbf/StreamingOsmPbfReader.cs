@@ -553,8 +553,8 @@ public sealed class StreamingOsmPbfReader
         var node = new OsmNodeView(
             ordinal,
             checked((ulong)id),
-            1e-9 * (latitudeOffset + (granularity * latitude)),
-            1e-9 * (longitudeOffset + (granularity * longitude)),
+            (latitudeOffset + (granularity * latitude)) / 1_000_000_000d,
+            (longitudeOffset + (granularity * longitude)) / 1_000_000_000d,
             tags);
         metrics.DecodedNodeCount++;
         sink.AddNode(in node);
@@ -652,8 +652,8 @@ public sealed class StreamingOsmPbfReader
             var node = new OsmNodeView(
                 initialOrdinal with { EntityOrdinal = entityOrdinal },
                 checked((ulong)id),
-                1e-9 * (latitudeOffset + (granularity * latitude)),
-                1e-9 * (longitudeOffset + (granularity * longitude)),
+                (latitudeOffset + (granularity * latitude)) / 1_000_000_000d,
+                (longitudeOffset + (granularity * longitude)) / 1_000_000_000d,
                 tags);
             metrics.DecodedNodeCount++;
             sink.AddNode(in node);

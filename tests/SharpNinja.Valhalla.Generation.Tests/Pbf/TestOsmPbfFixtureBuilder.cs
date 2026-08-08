@@ -18,10 +18,14 @@ internal static class TestOsmPbfFixtureBuilder
         "from",
     ];
 
-    public static byte[] Create(OsmPbfCompressionKind compression, int dataBlockCount = 1)
+    public static byte[] Create(
+        OsmPbfCompressionKind compression,
+        int dataBlockCount = 1,
+        long latitude = 360_000_000,
+        long longitude = -860_000_000)
     {
         var result = new MemoryStream();
-        var primitiveBlock = CreatePrimitiveBlock();
+        var primitiveBlock = CreatePrimitiveBlock(latitude, longitude);
         for (var block = 0; block < dataBlockCount; block++)
         {
             WriteFileBlock(result, "OSMData", CreateBlob(primitiveBlock, compression));
@@ -49,11 +53,11 @@ internal static class TestOsmPbfFixtureBuilder
         return result;
     }
 
-    private static byte[] CreatePrimitiveBlock()
+    private static byte[] CreatePrimitiveBlock(long latitude = 360_000_000, long longitude = -860_000_000)
     {
         using var block = new MemoryStream();
         WriteBytes(block, 1, CreateStringTable());
-        WriteBytes(block, 2, CreatePrimitiveGroup());
+        WriteBytes(block, 2, CreatePrimitiveGroup(latitude, longitude));
         WriteInt32(block, 17, 100);
         return block.ToArray();
     }
@@ -69,23 +73,23 @@ internal static class TestOsmPbfFixtureBuilder
         return table.ToArray();
     }
 
-    private static byte[] CreatePrimitiveGroup()
+    private static byte[] CreatePrimitiveGroup(long latitude, long longitude)
     {
         using var group = new MemoryStream();
-        WriteBytes(group, 1, CreateNode());
+        WriteBytes(group, 1, CreateNode(latitude, longitude));
         WriteBytes(group, 3, CreateWay());
         WriteBytes(group, 4, CreateRelation());
         return group.ToArray();
     }
 
-    private static byte[] CreateNode()
+    private static byte[] CreateNode(long latitude, long longitude)
     {
         using var node = new MemoryStream();
         WriteSInt64(node, 1, 1);
         WritePackedUInt32(node, 2, [1]);
         WritePackedUInt32(node, 3, [2]);
-        WriteSInt64(node, 8, 360_000_000);
-        WriteSInt64(node, 9, -860_000_000);
+        WriteSInt64(node, 8, latitude);
+        WriteSInt64(node, 9, longitude);
         return node.ToArray();
     }
 

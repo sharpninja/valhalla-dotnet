@@ -40,6 +40,26 @@ public sealed class StreamingOsmPbfReaderTests
         Assert.All(result.Metrics.BlockReceipts, receipt => Assert.Equal(1, receipt.DecompressionCount));
     }
 
+    [Fact]
+    public async Task NodeCoordinates_MatchLibOsmiumDivisionSemantics()
+    {
+        const long latitude = 437_315_839;
+        const long longitude = 74_123_195;
+        var (store, _) = await ReadAsync(
+            TestOsmPbfFixtureBuilder.Create(
+                OsmPbfCompressionKind.Raw,
+                latitude: latitude,
+                longitude: longitude));
+
+        OsmNodeEntity node = Assert.Single(store.Nodes);
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(latitude / 10_000_000d),
+            BitConverter.DoubleToInt64Bits(node.Latitude));
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(longitude / 10_000_000d),
+            BitConverter.DoubleToInt64Bits(node.Longitude));
+    }
+
     private static async Task<(InMemoryOsmEntityStore Store, StreamingOsmPbfReadResult Result)> ReadAsync(
         byte[] pbf)
     {
