@@ -1,10 +1,28 @@
 using SharpNinja.Valhalla.Baldr;
+using SharpNinja.Valhalla.Midgard;
 using SharpNinja.Valhalla.Mjolnir;
 
 namespace SharpNinja.Valhalla.Tests.Mjolnir;
 
 public sealed class GraphValidationParityTests
 {
+    [Fact]
+    public void DiscretizedBoundingCircle_MatchesOfficialPackingAndCoverage()
+    {
+        var binCenter = new PointLL(-86.6750, 36.1225);
+        var circle = new DiscretizedBoundingCircle(binCenter, binCenter, 10);
+
+        Assert.True(circle.IsValid);
+        Assert.Equal(4096u, circle.XOffset);
+        Assert.Equal(4096u, circle.YOffset);
+        Assert.Equal(10u, circle.RadiusIndex);
+
+        (PointLL center, double radiusMeters) = circle.Get(binCenter);
+        Assert.Equal(13, radiusMeters);
+        Assert.True(center.Distance(binCenter) + 10 <= radiusMeters);
+        Assert.Equal(circle, DiscretizedBoundingCircle.FromRaw(circle.RawValue));
+    }
+
     [Fact]
     public void ValidatedGraphStructure_MatchesOfficial()
     {
@@ -45,6 +63,7 @@ public sealed class GraphValidationParityTests
                     tileBytes.AsSpan(GraphTileHeader.HeaderSize));
 
                 Assert.Equal(expectedHash, header.TileChecksum());
+                Assert.True(header.HasBoundingCircles());
                 tileHashes.Add(header.TileChecksum());
                 buildIds.Add(header.BuildId());
 
@@ -54,6 +73,38 @@ public sealed class GraphValidationParityTests
                     GraphId[] ids = tile.GetBin(
                         bin % GraphTileHeader.BinsDim,
                         bin / GraphTileHeader.BinsDim).ToArray();
+                    DiscretizedBoundingCircle[] circles = tile.GetBoundingCircles(
+                        bin % GraphTileHeader.BinsDim,
+                        bin / GraphTileHeader.BinsDim).ToArray();
+                    Assert.Equal(ids.Length, circles.Length);
+                    Assert.All(circles, static circle => Assert.True(circle.IsValid));
+
+                    Tiles<PointLL, double> localTiles = TileHierarchy.Levels()[^1].Tiles;
+                    Aabb2T<double> tileBounds =
+                        localTiles.TileBounds((int)header.Graphid().Tileid());
+                    double subdivisionSize = localTiles.SubdivisionSize();
+                    var binCenter = new PointLL(
+                        tileBounds.Minx +
+                        ((bin % GraphTileHeader.BinsDim) * subdivisionSize) +
+                        (subdivisionSize * 0.5),
+                        tileBounds.Miny +
+                        ((bin / GraphTileHeader.BinsDim) * subdivisionSize) +
+                        (subdivisionSize * 0.5));
+                    for (int entryIndex = 0; entryIndex < ids.Length; entryIndex++)
+                    {
+                        DirectedEdge indexedEdge =
+                            tile.DirectedEdge((int)ids[entryIndex].Id());
+                        IReadOnlyList<PointLL> indexedShape =
+                            tile.EdgeInfo(indexedEdge).Shape();
+                        (PointLL circleCenter, double radiusMeters) =
+                            circles[entryIndex].Get(binCenter);
+                        Assert.All(
+                            indexedShape,
+                            point => Assert.True(
+                                point.Distance(circleCenter) <= radiusMeters,
+                                $"Bin {bin} circle does not cover {point}."));
+                    }
+
                     GraphId[] sorted = ids
                         .OrderByDescending(id => id.Level())
                         .ThenBy(id => id.Tileid())

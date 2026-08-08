@@ -145,7 +145,7 @@ public static class GraphValidator
         // The reader cache is dropped first so AddBins observes the just-rewritten local tiles.
         reader.Trim();
         byte localLevel = TileHierarchy.Levels()[^1].Level;
-        foreach (KeyValuePair<ulong, List<ulong>[]> tw in tweeners)
+        foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
         {
             var tweenTileId = new GraphId(tw.Key);
             GraphTile? tile = GraphTile.Create(tileDir, tweenTileId);
@@ -390,7 +390,7 @@ public static class GraphValidator
         // Bin the edges (compute this tile's own bins + accumulate cross-tile tweeners) BEFORE the
         // tile is rewritten, while the original shapes/edges are still readable. Faithful port of
         // GraphTileBuilder::BinEdges in graphvalidator.cc.
-        List<ulong>[] bins = EdgeBinner.BinEdges(tile, tweeners);
+        List<EdgeBinner.BinEntry>[] bins = EdgeBinner.BinEdges(tile, tweeners);
 
         // Write the new tile.
         tilebuilder.Update(tileDir, nodes, directededges);

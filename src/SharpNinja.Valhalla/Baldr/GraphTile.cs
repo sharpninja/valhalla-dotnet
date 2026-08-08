@@ -92,6 +92,7 @@ public sealed class GraphTile : IGraphTilePtr
     private const int TurnLanesSize = 8;       // sizeof(TurnLanes)
     private const int AdminSize = 16;          // sizeof(Admin)
     private const int GraphIdSize = 8;         // sizeof(GraphId)
+    private const int BoundingCircleSize = DiscretizedBoundingCircle.SizeOf;
 
     // PORT-NOTE: transit record sizes (transit* excluded; only used to skip the sections).
     //   TransitDeparture: 32 bytes, TransitStop: 8, TransitRoute: 92, TransitSchedule: 16,
@@ -1074,6 +1075,38 @@ public sealed class GraphTile : IGraphTilePtr
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Gets the Valhalla 3.8.3 discretized bounding circles aligned one-for-one with a bin's
+    /// GraphIds. Legacy tiles return an empty collection.
+    /// </summary>
+    public IReadOnlyList<DiscretizedBoundingCircle> GetBoundingCircles(
+        int column,
+        int row)
+        => GetBoundingCircles((row * GraphTileHeader.BinsDim) + column);
+
+    /// <summary>Gets the discretized bounding circles for a row-major bin index.</summary>
+    public IReadOnlyList<DiscretizedBoundingCircle> GetBoundingCircles(int index)
+    {
+        if (!_header.HasBoundingCircles())
+        {
+            return [];
+        }
+
+        (uint begin, uint end) = _header.BinOffset(index);
+        var circles = new List<DiscretizedBoundingCircle>((int)(end - begin));
+        int sectionOffset =
+            _memory.Offset + checked((int)_header.BoundingCircleOffset());
+        for (uint circleIndex = begin; circleIndex < end; circleIndex++)
+        {
+            uint rawValue = ReadUInt32(
+                _blob,
+                sectionOffset + checked((int)circleIndex * BoundingCircleSize));
+            circles.Add(DiscretizedBoundingCircle.FromRaw(rawValue));
+        }
+
+        return circles;
     }
 
     // ------------------------------------------------------------------

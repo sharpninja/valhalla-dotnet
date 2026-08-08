@@ -1,6 +1,6 @@
 // Edge binning: builds the per-tile 5x5 spatial index (the "bins") that loki's
 // edge-search-by-bin relies on (Loki.BinHandler reads GraphTile.GetBin). Faithful port of the
-// binning half of valhalla 3.7.0's GraphValidator::Validate -> GraphTileBuilder::BinEdges /
+// binning half of Valhalla 3.8.3's GraphValidator::Validate -> GraphTileBuilder::BinEdges /
 // GraphTileBuilder::AddBins (src/mjolnir/graphtilebuilder.cc) plus the supporting geometry
 // midgard::Tiles::Intersect / bresenham_line (src/midgard/tiles.cc) and
 // midgard::resample_spherical_polyline (src/midgard/util.cc).
@@ -12,6 +12,7 @@
 // behave like the C++ valhalla_build_tiles output.
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 
@@ -29,21 +30,26 @@ internal static class EdgeBinner
 {
     private const int BinCount = GraphTileHeader.BinCount; // 25
     private const int BinsDim = GraphTileHeader.BinsDim;   // 5
-    private const int GraphIdSize = 8;                     // sizeof(GraphId) / sizeof(uint64)
+    private const int GraphIdSize = sizeof(ulong);
+    private const int BoundingCircleSize = DiscretizedBoundingCircle.SizeOf;
+
+    internal readonly record struct BinEntry(
+        ulong GraphId,
+        DiscretizedBoundingCircle BoundingCircle);
 
     // Tweeners: edges that pass through a tile without starting or ending in it. Keyed by the tile's
     // GraphId (base id at the local level). Faithful port of the C++ tweeners_t (map of GraphId ->
-    // array<vector<GraphId>, kBinCount>).
-    internal sealed class Tweeners : Dictionary<ulong, List<ulong>[]>
+    // array<vector<pair<GraphId, DiscretizedBoundingCircle>>, kBinCount>).
+    internal sealed class Tweeners : Dictionary<ulong, List<BinEntry>[]>
     {
     }
 
     // Custom comparator to sort bin contents by GraphId (level desc, tile_id asc, id asc). Faithful
     // port of graphvalidator.cc graphid_less.
-    private static int GraphIdLess(ulong aVal, ulong bVal)
+    private static int GraphIdLess(BinEntry first, BinEntry second)
     {
-        var a = new GraphId(aVal);
-        var b = new GraphId(bVal);
+        var a = new GraphId(first.GraphId);
+        var b = new GraphId(second.GraphId);
         if (a.Level() != b.Level())
         {
             return a.Level() > b.Level() ? -1 : 1;
@@ -67,7 +73,7 @@ internal static class EdgeBinner
     /// cross-tile pass-through edges into <paramref name="tweeners"/>. Faithful port of
     /// <c>GraphTileBuilder::BinEdges</c>.
     /// </summary>
-    internal static List<ulong>[] BinEdges(GraphTile tile, Tweeners tweeners)
+    internal static List<BinEntry>[] BinEdges(GraphTile tile, Tweeners tweeners)
     {
         var bins = NewBins();
 
@@ -119,6 +125,10 @@ internal static class EdgeBinner
                 continue;
             }
 
+            (PointLL Center, double RadiusMeters)? boundingCircle =
+                MinimumBoundingCircle.Compute(
+                    shape,
+                    DiscretizedBoundingCircle.MaxCircleBoundingBoxMeters);
             Dictionary<int, HashSet<ushort>> intersection = Intersect(tiles, shape);
             var edgeId = new GraphId(tileGraphId.Tileid(), tileGraphId.Level(), e);
             foreach (KeyValuePair<int, HashSet<ushort>> i in intersection)
@@ -129,7 +139,7 @@ internal static class EdgeBinner
                 if (originating || (intermediate && !terminating) || loopBack)
                 {
                     // which set of bins, either this local set or tweeners to be added later.
-                    List<ulong>[] outBins;
+                    List<BinEntry>[] outBins;
                     if (originating && max)
                     {
                         outBins = bins;
@@ -137,7 +147,7 @@ internal static class EdgeBinner
                     else
                     {
                         var key = new GraphId((uint)i.Key, maxLevel, 0).Value;
-                        if (!tweeners.TryGetValue(key, out List<ulong>[]? tw))
+                        if (!tweeners.TryGetValue(key, out List<BinEntry>[]? tw))
                         {
                             tw = NewBins();
                             tweeners[key] = tw;
@@ -146,9 +156,27 @@ internal static class EdgeBinner
                         outBins = tw;
                     }
 
+                    Aabb2T<double> tileBounds = tiles.TileBounds(i.Key);
+                    double subdivisionSize = tiles.SubdivisionSize();
                     foreach (ushort bin in i.Value)
                     {
-                        outBins[bin].Add(edgeId.Value);
+                        double latitudeOffset =
+                            ((bin / BinsDim) * subdivisionSize) +
+                            (subdivisionSize * 0.5);
+                        double longitudeOffset =
+                            ((bin % BinsDim) * subdivisionSize) +
+                            (subdivisionSize * 0.5);
+                        var binCenter = new PointLL(
+                            tileBounds.Minx + longitudeOffset,
+                            tileBounds.Miny + latitudeOffset);
+                        DiscretizedBoundingCircle circle =
+                            boundingCircle is { } computed
+                                ? new DiscretizedBoundingCircle(
+                                    binCenter,
+                                    computed.Center,
+                                    computed.RadiusMeters)
+                                : DiscretizedBoundingCircle.Invalid;
+                        outBins[bin].Add(new BinEntry(edgeId.Value, circle));
                     }
                 }
             }
@@ -163,89 +191,165 @@ internal static class EdgeBinner
     /// <c>GraphTileBuilder::AddBins</c> (operates directly on the serialized blob - the bin section
     /// sits between the admins and the complex-restriction sections).
     /// </summary>
-    internal static void AddBins(string tileDir, GraphTile tile, List<ulong>[] moreBins)
+    internal static void AddBins(
+        string tileDir,
+        GraphTile tile,
+        List<BinEntry>[] moreBins)
     {
-        // read existing bins and append.
-        var bins = new List<ulong>[BinCount];
-        uint shiftCount = 0;
-        for (int i = 0; i < BinCount; i++)
+        ArgumentNullException.ThrowIfNull(tileDir);
+        ArgumentNullException.ThrowIfNull(tile);
+        ArgumentNullException.ThrowIfNull(moreBins);
+        if (moreBins.Length != BinCount)
         {
-            IReadOnlyList<GraphId> existing = tile.GetBin(i % BinsDim, i / BinsDim);
-            var combined = new List<ulong>(existing.Count + moreBins[i].Count);
-            foreach (GraphId g in existing)
+            throw new ArgumentException(
+                $"Bins must contain exactly {BinCount} entries.",
+                nameof(moreBins));
+        }
+
+        var bins = new List<BinEntry>[BinCount];
+        uint totalCount = 0;
+        bool hadBoundingCircles = tile.Header().HasBoundingCircles();
+        for (int binIndex = 0; binIndex < BinCount; binIndex++)
+        {
+            IReadOnlyList<GraphId> existing =
+                tile.GetBin(binIndex % BinsDim, binIndex / BinsDim);
+            IReadOnlyList<DiscretizedBoundingCircle> existingCircles =
+                tile.GetBoundingCircles(binIndex % BinsDim, binIndex / BinsDim);
+            if (hadBoundingCircles && existing.Count != existingCircles.Count)
             {
-                combined.Add(g.Value);
+                throw new InvalidDataException(
+                    $"Bin {binIndex} has {existing.Count} graph ids but " +
+                    $"{existingCircles.Count} bounding circles.");
             }
 
-            combined.AddRange(moreBins[i]);
-            bins[i] = combined;
-            shiftCount += (uint)moreBins[i].Count;
+            var combined = new List<BinEntry>(
+                checked(existing.Count + moreBins[binIndex].Count));
+            for (int existingIndex = 0; existingIndex < existing.Count; existingIndex++)
+            {
+                DiscretizedBoundingCircle circle =
+                    hadBoundingCircles
+                        ? existingCircles[existingIndex]
+                        : DiscretizedBoundingCircle.Invalid;
+                combined.Add(new BinEntry(existing[existingIndex].Value, circle));
+            }
+
+            combined.AddRange(moreBins[binIndex]);
+            bins[binIndex] = combined;
+            totalCount = checked(totalCount + (uint)combined.Count);
         }
 
-        uint shift = shiftCount * GraphIdSize;
-
-        // update header bin offsets (cumulative counts) - mirrors set_edge_bin_offsets.
         var offsets = new uint[BinCount];
         offsets[0] = (uint)bins[0].Count;
-        for (int i = 1; i < BinCount; i++)
+        for (int binIndex = 1; binIndex < BinCount; binIndex++)
         {
-            offsets[i] = (uint)bins[i].Count + offsets[i - 1];
+            offsets[binIndex] =
+                checked(offsets[binIndex - 1] + (uint)bins[binIndex].Count);
         }
 
-        // The original tile image is laid out as: header, [...fixed sections...], existing bins,
-        // [...trailing variable sections...]. We rebuild it by writing the (mutated) header, the
-        // bytes between the header and the bin section verbatim, the new bins, then the trailing
-        // bytes verbatim. Section offsets after the bins shift by the inserted byte count.
         byte[] original = tile.TileImage();
-        int binSectionStart = tile.EdgeBinsImageOffset();      // byte offset of bins within the image
-        uint oldBinBytes = tile.Header().BinOffset(BinCount - 1).End * GraphIdSize;
-        int binSectionEnd = binSectionStart + (int)oldBinBytes;
+        int binSectionStart = tile.EdgeBinsImageOffset();
+        uint oldCount = tile.Header().BinOffset(BinCount - 1).End;
+        int oldBinBytes = checked((int)oldCount * GraphIdSize);
+        int oldCircleBytes =
+            hadBoundingCircles
+                ? checked((int)oldCount * BoundingCircleSize)
+                : 0;
+        int trailingSectionStart =
+            hadBoundingCircles
+                ? checked((int)tile.Header().BoundingCircleOffset() + oldCircleBytes)
+                : checked(binSectionStart + oldBinBytes);
+        if (trailingSectionStart < binSectionStart ||
+            trailingSectionStart > original.Length)
+        {
+            throw new InvalidDataException(
+                "The tile's bin and bounding-circle offsets are inconsistent.");
+        }
+
+        bool hasBoundingCircles = totalCount != 0;
+        int newBinBytes = checked((int)totalCount * GraphIdSize);
+        int newCircleBytes =
+            hasBoundingCircles
+                ? checked((int)totalCount * BoundingCircleSize)
+                : 0;
+        int oldIndexedBytes = checked(oldBinBytes + oldCircleBytes);
+        int newIndexedBytes = checked(newBinBytes + newCircleBytes);
+        uint shift = checked((uint)(newIndexedBytes - oldIndexedBytes));
+        int headerSize = GraphTileHeader.HeaderSize;
+        int preLength = checked(binSectionStart - headerSize);
+        int trailingLength = checked(original.Length - trailingSectionStart);
+        int unpaddedLength =
+            checked(headerSize + preLength + newIndexedBytes + trailingLength);
+        int padding = (8 - (unpaddedLength % 8)) % 8;
+        int finalLength = checked(unpaddedLength + padding);
 
         var header = new GraphTileHeader();
         header.CopyFrom(tile.Header());
         header.SetEdgeBinOffsets(offsets);
-        header.SetComplexRestrictionForwardOffset(header.ComplexRestrictionForwardOffset() + shift);
-        header.SetComplexRestrictionReverseOffset(header.ComplexRestrictionReverseOffset() + shift);
-        header.SetEdgeinfoOffset(header.EdgeinfoOffset() + shift);
-        header.SetTextlistOffset(header.TextlistOffset() + shift);
-        header.SetLaneConnectivityOffset(header.LaneConnectivityOffset() + shift);
+        header.SetBoundingCircleOffset(
+            hasBoundingCircles
+                ? checked((uint)(binSectionStart + newBinBytes))
+                : 0);
+        header.SetComplexRestrictionForwardOffset(
+            checked(header.ComplexRestrictionForwardOffset() + shift));
+        header.SetComplexRestrictionReverseOffset(
+            checked(header.ComplexRestrictionReverseOffset() + shift));
+        header.SetEdgeinfoOffset(checked(header.EdgeinfoOffset() + shift));
+        header.SetTextlistOffset(checked(header.TextlistOffset() + shift));
+        header.SetLaneConnectivityOffset(
+            checked(header.LaneConnectivityOffset() + shift));
         if (header.PredictedspeedsOffset() != 0)
         {
-            header.SetPredictedspeedsOffset(header.PredictedspeedsOffset() + shift);
+            header.SetPredictedspeedsOffset(
+                checked(header.PredictedspeedsOffset() + shift));
         }
 
-        header.SetEndOffset(header.EndOffset() + shift);
+        header.SetEndOffset(checked((uint)finalLength));
 
-        int headerSize = GraphTileHeader.HeaderSize;
-        int newBinBytes = (int)(offsets[BinCount - 1] * GraphIdSize);
-
-        // pre-bins region (between header end and the bins) is unchanged.
-        int preLen = binSectionStart - headerSize;
-        // post-bins region (everything after the old bins to the end of the tile) is unchanged.
-        int postLen = original.Length - binSectionEnd;
-
-        var blob = new byte[headerSize + preLen + newBinBytes + postLen];
-        int pos = 0;
-        header.AsSpan().CopyTo(blob.AsSpan(pos, headerSize));
-        pos += headerSize;
-        Array.Copy(original, headerSize, blob, pos, preLen);
-        pos += preLen;
-        for (int i = 0; i < BinCount; i++)
+        var blob = new byte[finalLength];
+        int position = 0;
+        header.AsSpan().CopyTo(blob.AsSpan(position, headerSize));
+        position += headerSize;
+        original.AsSpan(headerSize, preLength)
+            .CopyTo(blob.AsSpan(position, preLength));
+        position += preLength;
+        for (int binIndex = 0; binIndex < BinCount; binIndex++)
         {
-            foreach (ulong value in bins[i])
+            foreach (BinEntry entry in bins[binIndex])
             {
-                WriteUInt64(blob, pos, value);
-                pos += GraphIdSize;
+                WriteUInt64(blob, position, entry.GraphId);
+                position += GraphIdSize;
             }
         }
 
-        Array.Copy(original, binSectionEnd, blob, pos, postLen);
+        if (hasBoundingCircles)
+        {
+            for (int binIndex = 0; binIndex < BinCount; binIndex++)
+            {
+                foreach (BinEntry entry in bins[binIndex])
+                {
+                    WriteUInt32(
+                        blob,
+                        position,
+                        entry.BoundingCircle.RawValue);
+                    position += BoundingCircleSize;
+                }
+            }
+        }
+
+        original.AsSpan(trailingSectionStart, trailingLength)
+            .CopyTo(blob.AsSpan(position, trailingLength));
+        position += trailingLength;
+        if (position + padding != blob.Length)
+        {
+            throw new InvalidDataException(
+                "The rebuilt tile length does not match its aligned end offset.");
+        }
 
         string path = Path.Combine(tileDir, GraphTile.FileSuffix(tile.Id()));
-        string? dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
         {
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(directory);
         }
 
         GraphTileChecksum.RefreshTileHash(blob);
@@ -256,20 +360,20 @@ internal static class EdgeBinner
     /// Sorts each bin's GraphIds deterministically (graphid_less) before writing. Faithful port of
     /// the per-bin std::sort in graphvalidator.cc (Write the bins / bin_tweeners).
     /// </summary>
-    internal static void SortBins(List<ulong>[] bins)
+    internal static void SortBins(List<BinEntry>[] bins)
     {
-        for (int i = 0; i < bins.Length; i++)
+        for (int binIndex = 0; binIndex < bins.Length; binIndex++)
         {
-            bins[i].Sort(GraphIdLess);
+            bins[binIndex].Sort(GraphIdLess);
         }
     }
 
-    private static List<ulong>[] NewBins()
+    private static List<BinEntry>[] NewBins()
     {
-        var bins = new List<ulong>[BinCount];
-        for (int i = 0; i < BinCount; i++)
+        var bins = new List<BinEntry>[BinCount];
+        for (int binIndex = 0; binIndex < BinCount; binIndex++)
         {
-            bins[i] = new List<ulong>();
+            bins[binIndex] = new List<BinEntry>();
         }
 
         return bins;
@@ -478,11 +582,13 @@ internal static class EdgeBinner
         return resampled;
     }
 
+    private static void WriteUInt32(byte[] buffer, int offset, uint value)
+        => BinaryPrimitives.WriteUInt32LittleEndian(
+            buffer.AsSpan(offset, sizeof(uint)),
+            value);
+
     private static void WriteUInt64(byte[] buffer, int offset, ulong value)
-    {
-        for (int i = 0; i < 8; i++)
-        {
-            buffer[offset + i] = (byte)(value >> (8 * i));
-        }
-    }
+        => BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.AsSpan(offset, sizeof(ulong)),
+            value);
 }
