@@ -248,7 +248,7 @@ public sealed class OfficialValhallaContainerTileSetReader
     /// <summary>
     /// Runs the stock reader without network access and returns a bounded integrity receipt.
     /// </summary>
-    public async ValueTask<OfficialValhallaTileSetReadReceipt> ReadAsync(
+    public ValueTask<OfficialValhallaTileSetReadReceipt> ReadAsync(
         string tileDirectory,
         CancellationToken cancellationToken = default)
     {
@@ -267,6 +267,40 @@ public sealed class OfficialValhallaContainerTileSetReader
             throw new InvalidDataException("The managed Valhalla tile directory contains no graph tiles.");
         }
 
+        return ReadCoreAsync(fullDirectory, tileExtractFileName: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the stock reader directly against one managed Valhalla tile extract.
+    /// </summary>
+    public ValueTask<OfficialValhallaTileSetReadReceipt> ReadExtractAsync(
+        string tileExtractPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tileExtractPath);
+        string fullPath = Path.GetFullPath(tileExtractPath);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException(
+                "The managed Valhalla tile extract was not found.",
+                fullPath);
+        }
+
+        string? fullDirectory = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrEmpty(fullDirectory))
+        {
+            throw new InvalidDataException(
+                "The managed Valhalla tile extract has no parent directory.");
+        }
+
+        return ReadCoreAsync(fullDirectory, Path.GetFileName(fullPath), cancellationToken);
+    }
+
+    private async ValueTask<OfficialValhallaTileSetReadReceipt> ReadCoreAsync(
+        string fullDirectory,
+        string? tileExtractFileName,
+        CancellationToken cancellationToken)
+    {
         ProcessReceipt inspection = await RunDockerAsync(
                 ["image", "inspect", _options.ImageReference],
                 maximumStandardOutputBytes: 256 * 1024,
@@ -274,7 +308,10 @@ public sealed class OfficialValhallaContainerTileSetReader
                 containerName: null,
                 cancellationToken)
             .ConfigureAwait(false);
-        EnsureSuccess(inspection, fullDirectory, "The pinned official Valhalla image is unavailable.");
+        EnsureSuccess(
+            inspection,
+            fullDirectory,
+            "The pinned official Valhalla image is unavailable.");
 
         string versionContainer = CreateContainerName("version");
         ProcessReceipt version = await RunDockerAsync(
@@ -287,16 +324,23 @@ public sealed class OfficialValhallaContainerTileSetReader
                 versionContainer,
                 cancellationToken)
             .ConfigureAwait(false);
-        EnsureSuccess(version, fullDirectory, "The official Valhalla reader version probe failed.");
+        EnsureSuccess(
+            version,
+            fullDirectory,
+            "The official Valhalla reader version probe failed.");
 
         string versionText = Encoding.UTF8.GetString(version.StandardOutput.Bytes);
         Match versionMatch = VersionPattern.Match(versionText);
         if (!versionMatch.Success)
         {
-            throw new InvalidDataException("The official Valhalla reader returned an unrecognized version.");
+            throw new InvalidDataException(
+                "The official Valhalla reader returned an unrecognized version.");
         }
 
         string configurationContainer = CreateContainerName("config");
+        string containerTileExtract = tileExtractFileName is null
+            ? string.Empty
+            : $"/tiles/{tileExtractFileName}";
         ProcessReceipt configuration = await RunDockerAsync(
                 CreateContainerArguments(
                     "valhalla_build_config",
@@ -308,7 +352,7 @@ public sealed class OfficialValhallaContainerTileSetReader
                         "--mjolnir-tile-dir",
                         "/tiles",
                         "--mjolnir-tile-extract",
-                        string.Empty,
+                        containerTileExtract,
                         "--mjolnir-admin",
                         "/disabled/admin.sqlite",
                         "--mjolnir-timezone",
@@ -326,8 +370,9 @@ public sealed class OfficialValhallaContainerTileSetReader
             configuration,
             fullDirectory,
             "The official Valhalla configuration builder failed.");
-        byte[] serviceConfiguration =
-            PrepareConfiguration(configuration.StandardOutput.Bytes);
+        byte[] serviceConfiguration = PrepareConfiguration(
+            configuration.StandardOutput.Bytes,
+            string.IsNullOrEmpty(containerTileExtract) ? null : containerTileExtract);
 
         string configurationDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -356,7 +401,10 @@ public sealed class OfficialValhallaContainerTileSetReader
                     locateContainer,
                     cancellationToken)
                 .ConfigureAwait(false);
-            EnsureSuccess(locate, fullDirectory, "The official Valhalla reader rejected the managed tiles.");
+            EnsureSuccess(
+                locate,
+                fullDirectory,
+                "The official Valhalla reader rejected the managed graph source.");
             int matchedEdgeCount = CountMatchedEdges(locate.StandardOutput.Bytes);
             if (matchedEdgeCount == 0)
             {
@@ -808,7 +856,9 @@ public sealed class OfficialValhallaContainerTileSetReader
         }
     }
 
-    private static byte[] PrepareConfiguration(byte[] configuration)
+    private static byte[] PrepareConfiguration(
+        byte[] configuration,
+        string? expectedTileExtract = null)
     {
         try
         {
@@ -820,6 +870,16 @@ public sealed class OfficialValhallaContainerTileSetReader
             {
                 throw new InvalidDataException(
                     "The official Valhalla configuration did not preserve the exact tile mount.");
+            }
+
+            if (expectedTileExtract is not null &&
+                !string.Equals(
+                    mjolnir?["tile_extract"]?.GetValue<string>(),
+                    expectedTileExtract,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "The official Valhalla configuration did not preserve the exact tile extract mount.");
             }
 
             foreach (string optionalPath in new[]
@@ -835,6 +895,12 @@ public sealed class OfficialValhallaContainerTileSetReader
                          "incident_log",
                      })
             {
+                if (expectedTileExtract is not null &&
+                    string.Equals(optionalPath, "tile_extract", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 _ = mjolnir!.Remove(optionalPath);
             }
 
