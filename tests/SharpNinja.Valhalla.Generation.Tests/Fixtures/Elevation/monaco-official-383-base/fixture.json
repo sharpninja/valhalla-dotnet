@@ -1,0 +1,19 @@
+{
+  "fixture": "official-valhalla-3.8.3-monaco-pre-elevation",
+  "upstreamCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+  "container": "ghcr.io/valhalla/valhalla:3.8.3",
+  "containerDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f",
+  "osmInput": "geofabrik-monaco-2025-12-15",
+  "syntheticElevation": {
+    "tile": "N43E007.hgt",
+    "dimension": 3601,
+    "formula": "100 + floor((column + (3600 - row)) / 20)",
+    "sha256": "FDA07BC422086C5049997A28828B3B527741B6D26DD7D4722BD04437E374C428"
+  },
+  "officialSemanticHashes": [
+    { "tileId": 3016, "level": 0, "sha256": "229E49103D994531C361906A03311D05707FE7FEFFE39621E6314B57FFDCC7EF" },
+    { "tileId": 48067, "level": 1, "sha256": "DE9250E5D6A33FFD69061D30B431904CC6E4CF01E306E7F4C3F392DF82035735" },
+    { "tileId": 769709, "level": 2, "sha256": "015B01779D6312988FCB3C91F05ED130D963281C8FE2AE49706441F47682BB18" },
+    { "tileId": 771149, "level": 2, "sha256": "1C6D160E08EF76C5616D8AF6B35701C7EFFCE43ED34795BFB65E1F157E642AB2" }
+  ]
+}
