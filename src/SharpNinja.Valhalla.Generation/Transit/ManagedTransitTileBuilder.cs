@@ -48,7 +48,12 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             feeds.Add(GtfsModelParser.Parse(raw, validated.Options.BuildDate));
         }
 
-        IReadOnlyDictionary<uint, TileContext> tiles = BuildContexts(feeds, cancellationToken);
+        using TransitTimeZoneResolver timeZoneResolver =
+            TransitTimeZoneResolver.Open(validated.TimeZoneDatabasePath);
+        IReadOnlyDictionary<uint, TileContext> tiles = BuildContexts(
+            feeds,
+            timeZoneResolver,
+            cancellationToken);
         string stagingDirectory = Path.Combine(
             validated.WorkingDirectory,
             "transit-" + Guid.NewGuid().ToString("N"));
@@ -56,8 +61,74 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
 
         try
         {
-            var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            TileContext[] orderedTiles = tiles.Values
+                .OrderBy(tile => tile.TileId)
+                .ToArray();
+            var artifacts = new TileBuildArtifact?[orderedTiles.Length];
             long bytesWritten = 0;
+            int activeWorkers = 0;
+            int peakConcurrency = 0;
+            const long MinimumWorkerBudgetBytes = 8 * 1024 * 1024;
+            int memoryBoundedDegree = checked((int)Math.Max(
+                1,
+                validated.Options.MemoryBudgetBytes / MinimumWorkerBudgetBytes));
+            int degree = Math.Min(
+                validated.Options.MaxDegreeOfParallelism,
+                memoryBoundedDegree);
+            var parallelOptions = new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = degree,
+            };
+
+            await System.Threading.Tasks.Parallel.ForEachAsync(
+                Enumerable.Range(0, orderedTiles.Length),
+                parallelOptions,
+                async (index, token) =>
+                {
+                    await Task.Yield();
+                    int active = Interlocked.Increment(ref activeWorkers);
+                    UpdatePeak(ref peakConcurrency, active);
+                    try
+                    {
+                        TileContext context = orderedTiles[index];
+                        token.ThrowIfCancellationRequested();
+                        byte[] bytes = BuildTile(context, validated.Options, token);
+                        GraphTile.Create(context.GraphId, bytes);
+                        long totalBytes = Interlocked.Add(ref bytesWritten, bytes.Length);
+                        if (totalBytes > validated.Options.ScratchDiskBudgetBytes)
+                        {
+                            throw new TransitTileBuildException(
+                                TransitTileBuildFailureCode.ResourceExhausted,
+                                $"Transit output exceeds scratch-disk budget of {validated.Options.ScratchDiskBudgetBytes} bytes");
+                        }
+
+                        string relativePath = GraphTile.FileSuffix(context.GraphId);
+                        string stagingPath = Path.Combine(stagingDirectory, relativePath);
+                        string? stagingParent = Path.GetDirectoryName(stagingPath);
+                        if (!string.IsNullOrEmpty(stagingParent))
+                        {
+                            Directory.CreateDirectory(stagingParent);
+                        }
+
+                        await File.WriteAllBytesAsync(stagingPath, bytes, token).ConfigureAwait(false);
+                        artifacts[index] = new TileBuildArtifact(
+                            relativePath.Replace(Path.DirectorySeparatorChar, '/'),
+                            Convert.ToHexString(SHA256.HashData(bytes)),
+                            context.Nodes.Count,
+                            context.Nodes.Sum(node => context.GetEdges(node).Count),
+                            context.Routes.Count,
+                            context.Departures.Count,
+                            context.Schedules.Count,
+                            context.Transfers.Count);
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref activeWorkers);
+                    }
+                }).ConfigureAwait(false);
+
+            var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
             int nodes = 0;
             int edges = 0;
             int stops = 0;
@@ -65,39 +136,20 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             int departures = 0;
             int schedules = 0;
             int transfers = 0;
-
-            foreach (TileContext context in tiles.Values.OrderBy(tile => tile.TileId))
+            foreach (TileBuildArtifact? nullableArtifact in artifacts)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                byte[] bytes = BuildTile(context, validated.Options, cancellationToken);
-                string relativePath = GraphTile.FileSuffix(context.GraphId);
-                string stagingPath = Path.Combine(stagingDirectory, relativePath);
-                string? stagingParent = Path.GetDirectoryName(stagingPath);
-                if (!string.IsNullOrEmpty(stagingParent))
-                {
-                    Directory.CreateDirectory(stagingParent);
-                }
-
-                await File.WriteAllBytesAsync(stagingPath, bytes, cancellationToken).ConfigureAwait(false);
-                bytesWritten = checked(bytesWritten + bytes.Length);
-                if (bytesWritten > validated.Options.ScratchDiskBudgetBytes)
-                {
-                    throw new TransitTileBuildException(
-                        TransitTileBuildFailureCode.ResourceExhausted,
-                        $"Transit output exceeds scratch-disk budget of {validated.Options.ScratchDiskBudgetBytes} bytes");
-                }
-
-                GraphTile.Create(context.GraphId, bytes);
-                hashes.Add(
-                    relativePath.Replace(Path.DirectorySeparatorChar, '/'),
-                    Convert.ToHexString(SHA256.HashData(bytes)));
-                nodes += context.Nodes.Count;
-                edges += context.Nodes.Sum(node => context.GetEdges(node).Count);
-                stops += context.Nodes.Count;
-                routes += context.Routes.Count;
-                departures += context.Departures.Count;
-                schedules += context.Schedules.Count;
-                transfers += context.Transfers.Count;
+                TileBuildArtifact artifact = nullableArtifact
+                    ?? throw new TransitTileBuildException(
+                        TransitTileBuildFailureCode.OutputValidationFailed,
+                        "A transit tile worker completed without an artifact receipt.");
+                hashes.Add(artifact.RelativePath, artifact.Sha256);
+                nodes += artifact.NodeCount;
+                edges += artifact.DirectedEdgeCount;
+                stops += artifact.NodeCount;
+                routes += artifact.RouteCount;
+                departures += artifact.DepartureCount;
+                schedules += artifact.ScheduleCount;
+                transfers += artifact.TransferCount;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -130,6 +182,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                 validated.OutputDirectory,
                 feeds.Count,
                 tiles.Count,
+                peakConcurrency,
                 nodes,
                 edges,
                 stops,
@@ -149,6 +202,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
 
     private static IReadOnlyDictionary<uint, TileContext> BuildContexts(
         IReadOnlyList<ParsedGtfsFeed> feeds,
+        TransitTimeZoneResolver timeZoneResolver,
         CancellationToken cancellationToken)
     {
         var tiles = new SortedDictionary<uint, TileContext>();
@@ -169,6 +223,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                         stationIdentity + "_transit_egress",
                         station.Name,
                         station.Coordinate,
+                        timeZoneResolver.Resolve(station.TimeZone, station.Coordinate),
                         NodeType.TransitEgress,
                         TransitAccess,
                         generated: true,
@@ -181,6 +236,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                         stationIdentity,
                         station.Name,
                         station.Coordinate,
+                        timeZoneResolver.Resolve(station.TimeZone, station.Coordinate),
                         NodeType.TransitStation,
                         TransitAccess,
                         generated: false,
@@ -202,6 +258,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                             Identity(feed.Prefix, platform.Id),
                             platform.Name,
                             platform.Coordinate,
+                            timeZoneResolver.Resolve(platform.TimeZone, platform.Coordinate),
                             NodeType.MultiUseTransitPlatform,
                             access,
                             generated: false,
@@ -280,7 +337,13 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
 
                     int departureIndex = context.Departures.Count;
                     context.Departures.Add(new DepartureSpec(departure, trip.Headsign));
-                    IReadOnlyList<PointLL> shape = ResolveShape(feed, trip, origin, destination);
+                    IReadOnlyList<PointLL> shape = ResolveShape(
+                        feed,
+                        trip,
+                        originTime,
+                        destinationTime,
+                        origin,
+                        destination);
                     context.AddEdge(
                         new TransitEdgeSpec(
                             origin,
@@ -352,24 +415,160 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
     private static IReadOnlyList<PointLL> ResolveShape(
         ParsedGtfsFeed feed,
         GtfsTrip trip,
+        GtfsStopTime originTime,
+        GtfsStopTime destinationTime,
         TransitNodeSpec origin,
         TransitNodeSpec destination)
     {
-        IReadOnlyList<PointLL> source = string.IsNullOrEmpty(trip.ShapeId)
-            ? [origin.Coordinate, destination.Coordinate]
-            : feed.Shapes[trip.ShapeId];
-        double normal =
-            origin.Coordinate.Distance(source[0]) +
-            destination.Coordinate.Distance(source[^1]);
-        double reversed =
-            origin.Coordinate.Distance(source[^1]) +
-            destination.Coordinate.Distance(source[0]);
-        if (reversed < normal)
+        if (string.IsNullOrEmpty(trip.ShapeId))
         {
-            return source.Reverse().ToArray();
+            return [origin.Coordinate, destination.Coordinate];
         }
 
-        return source.ToArray();
+        IReadOnlyList<PointLL> source = feed.Shapes[trip.ShapeId];
+        double[] distances = BuildCumulativeDistances(source);
+        double originDistance = ResolveShapeDistance(
+            originTime.ShapeDistance,
+            origin.Coordinate,
+            source,
+            distances);
+        double destinationDistance = ResolveShapeDistance(
+            destinationTime.ShapeDistance,
+            destination.Coordinate,
+            source,
+            distances);
+        if (originDistance >= destinationDistance)
+        {
+            return [origin.Coordinate, destination.Coordinate];
+        }
+
+        return SliceShape(
+            source,
+            distances,
+            originDistance,
+            destinationDistance,
+            origin.Coordinate,
+            destination.Coordinate);
+    }
+
+    private static double[] BuildCumulativeDistances(IReadOnlyList<PointLL> source)
+    {
+        var distances = new double[source.Count];
+        for (int index = 1; index < source.Count; index++)
+        {
+            distances[index] = distances[index - 1] + source[index - 1].Distance(source[index]);
+        }
+
+        return distances;
+    }
+
+    private static double ResolveShapeDistance(
+        double? suppliedDistance,
+        PointLL stop,
+        IReadOnlyList<PointLL> source,
+        IReadOnlyList<double> distances)
+    {
+        if (suppliedDistance is < 0)
+        {
+            throw new TransitTileBuildException(
+                TransitTileBuildFailureCode.InvalidValue,
+                "GTFS shape_dist_traveled cannot be negative.");
+        }
+
+        if (suppliedDistance is > 0)
+        {
+            return Math.Min(suppliedDistance.Value, distances[^1]);
+        }
+
+        double nearestSquared = double.PositiveInfinity;
+        double resolved = 0;
+        for (int index = 0; index < source.Count - 1; index++)
+        {
+            PointLL first = source[index];
+            PointLL second = source[index + 1];
+            double longitudeDelta = second.Lng - first.Lng;
+            double latitudeDelta = second.Lat - first.Lat;
+            double denominator =
+                (longitudeDelta * longitudeDelta)
+                + (latitudeDelta * latitudeDelta);
+            double fraction = denominator == 0
+                ? 0
+                : Math.Clamp(
+                    (((stop.Lng - first.Lng) * longitudeDelta)
+                        + ((stop.Lat - first.Lat) * latitudeDelta))
+                    / denominator,
+                    0,
+                    1);
+            double projectedLongitude = first.Lng + (longitudeDelta * fraction);
+            double projectedLatitude = first.Lat + (latitudeDelta * fraction);
+            double longitudeError = stop.Lng - projectedLongitude;
+            double latitudeError = stop.Lat - projectedLatitude;
+            double squared =
+                (longitudeError * longitudeError)
+                + (latitudeError * latitudeError);
+            if (squared < nearestSquared)
+            {
+                nearestSquared = squared;
+                resolved = fraction > 0.5 ? distances[index + 1] : distances[index];
+            }
+        }
+
+        return resolved;
+    }
+
+    private static IReadOnlyList<PointLL> SliceShape(
+        IReadOnlyList<PointLL> source,
+        IReadOnlyList<double> distances,
+        double originDistance,
+        double destinationDistance,
+        PointLL origin,
+        PointLL destination)
+    {
+        var result = new List<PointLL>
+        {
+            InterpolateShapePoint(source, distances, originDistance),
+        };
+        for (int index = 1; index < source.Count - 1; index++)
+        {
+            if (distances[index] > originDistance && distances[index] < destinationDistance)
+            {
+                result.Add(source[index]);
+            }
+        }
+
+        PointLL final = InterpolateShapePoint(source, distances, destinationDistance);
+        if (!result[^1].Equals(final))
+        {
+            result.Add(final);
+        }
+
+        result[0] = origin;
+        result[^1] = destination;
+        return result;
+    }
+
+    private static PointLL InterpolateShapePoint(
+        IReadOnlyList<PointLL> source,
+        IReadOnlyList<double> distances,
+        double distance)
+    {
+        double clamped = Math.Clamp(distance, 0, distances[^1]);
+        int index = 0;
+        while (index < distances.Count - 2 && distances[index + 1] < clamped)
+        {
+            index++;
+        }
+
+        double segmentLength = distances[index + 1] - distances[index];
+        if (segmentLength <= 0)
+        {
+            return source[index];
+        }
+
+        double fraction = (clamped - distances[index]) / segmentLength;
+        return new PointLL(
+            source[index].Lng + ((source[index + 1].Lng - source[index].Lng) * fraction),
+            source[index].Lat + ((source[index + 1].Lat - source[index].Lat) * fraction));
     }
 
     private static byte[] BuildTile(
@@ -453,6 +652,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             nodeInfo.SetEdgeCount(checked((uint)outgoing.Count));
             nodeInfo.SetLocalEdgeCount(checked((uint)outgoing.Count));
             nodeInfo.SetStopIndex(node.NodeIndex);
+            nodeInfo.SetTimezone(node.TimeZone);
             nodeInfo.SetModeChange(node.ModeChange);
 
             for (int localIndex = 0; localIndex < outgoing.Count; localIndex++)
@@ -593,6 +793,21 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
 
         return hash & 0x0000FFFFFFFFFFFFul;
     }
+    private static void UpdatePeak(ref int peak, int candidate)
+    {
+        int observed = Volatile.Read(ref peak);
+        while (candidate > observed)
+        {
+            int prior = Interlocked.CompareExchange(ref peak, candidate, observed);
+            if (prior == observed)
+            {
+                return;
+            }
+
+            observed = prior;
+        }
+    }
+
 
     private static ValidatedRequest Validate(TransitTileBuildRequest request)
     {
@@ -644,12 +859,25 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                 TransitTileBuildFailureCode.InvalidConfiguration,
                 "GTFS feed paths must be unique");
         }
+        string? timeZoneDatabasePath = null;
+        if (!string.IsNullOrWhiteSpace(request.TimeZoneDatabasePath))
+        {
+            timeZoneDatabasePath = Path.GetFullPath(request.TimeZoneDatabasePath);
+            if (!File.Exists(timeZoneDatabasePath))
+            {
+                throw new TransitTileBuildException(
+                    TransitTileBuildFailureCode.InvalidConfiguration,
+                    $"The transit timezone database does not exist: {timeZoneDatabasePath}");
+            }
+
+            RejectReparsePoint(timeZoneDatabasePath, nameof(request.TimeZoneDatabasePath));
+        }
 
         return new ValidatedRequest(
             feedPaths,
             workingDirectory,
             outputDirectory,
-            request.TimeZoneDatabasePath,
+            timeZoneDatabasePath,
             request.Options);
     }
 
@@ -794,6 +1022,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             string identity,
             string name,
             PointLL coordinate,
+            uint timeZone,
             NodeType type,
             uint access,
             bool generated,
@@ -803,6 +1032,7 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             Identity = identity;
             Name = name;
             Coordinate = coordinate;
+            TimeZone = timeZone;
             Type = type;
             Access = access;
             Generated = generated;
@@ -815,6 +1045,8 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
         public string Name { get; }
 
         public PointLL Coordinate { get; }
+        public uint TimeZone { get; }
+
 
         public NodeType Type { get; }
 
@@ -843,6 +1075,16 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
         string LongName,
         ulong StableId,
         int? DepartureIndex);
+    private sealed record TileBuildArtifact(
+        string RelativePath,
+        string Sha256,
+        int NodeCount,
+        int DirectedEdgeCount,
+        int RouteCount,
+        int DepartureCount,
+        int ScheduleCount,
+        int TransferCount);
+
 
     private sealed record RouteSpec(
         string FeedPrefix,

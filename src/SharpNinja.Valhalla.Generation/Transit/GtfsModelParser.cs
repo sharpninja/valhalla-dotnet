@@ -52,7 +52,8 @@ internal static class GtfsModelParser
                 locationType,
                 stopsTable.Optional(row, "parent_station"),
                 ParseOptionalInt(stopsTable.Optional(row, "wheelchair_boarding"), 0, "stops.txt.wheelchair_boarding"),
-                stopsTable.Optional(row, "platform_code"));
+                stopsTable.Optional(row, "platform_code"),
+                stopsTable.Optional(row, "stop_timezone"));
             if (!stops.TryAdd(id, stop))
             {
                 throw Invalid($"Duplicate stop_id {id}");
@@ -533,7 +534,8 @@ internal sealed record GtfsStop(
     int LocationType,
     string ParentStation,
     int WheelchairBoarding,
-    string PlatformCode);
+    string PlatformCode,
+    string TimeZone);
 
 internal sealed record GtfsRoute(
     string Id,

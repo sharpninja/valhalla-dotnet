@@ -31,6 +31,7 @@ public sealed record TransitTileBuildResult(
     string OutputDirectory,
     int FeedCount,
     int TileCount,
+    int PeakConcurrency,
     int NodeCount,
     int DirectedEdgeCount,
     int StopCount,
