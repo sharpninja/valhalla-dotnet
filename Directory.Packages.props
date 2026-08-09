@@ -17,7 +17,11 @@
     <!-- Explicit overrides for Nuke.Common's transitive deps: pin above the versions NuGet
          advisories flag (NU1901/NU1903) since Nuke.Common itself has no newer release yet. -->
     <PackageVersion Include="NuGet.Packaging" Version="7.6.0" />
-    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup Label="Benchmark">
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
   </ItemGroup>
 
   <ItemGroup Label="Test">

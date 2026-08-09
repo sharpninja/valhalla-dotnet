@@ -24,12 +24,23 @@
     "ExecutableTarget": {
       "type": "string",
       "enum": [
+        "BenchmarkNashville",
+        "BuildGenerationContainer",
         "Clean",
         "Compile",
+        "GenerateGenerationSbom",
+        "GenerateUpstreamParityReport",
         "Pack",
+        "PackGeneration",
+        "PackGenerationTool",
+        "PrepareGenerationArtifacts",
         "Publish",
+        "QualifyLower48",
+        "QualifyNashville",
         "Restore",
-        "Test"
+        "Test",
+        "TestGeneration",
+        "ValidateGenerationContainer"
       ]
     },
     "Verbosity": {
@@ -106,6 +117,18 @@
         "Configuration": {
           "type": "string",
           "description": "Build configuration - Debug locally, Release on the server by default"
+        },
+        "GenerationContainerTag": {
+          "type": "string",
+          "description": "Container tag for the managed generation image"
+        },
+        "Lower48Config": {
+          "type": "string",
+          "description": "Versioned JSON configuration for the Lower-48 qualification run"
+        },
+        "NashvilleConfig": {
+          "type": "string",
+          "description": "Versioned JSON configuration for the Nashville generation benchmark"
         },
         "NugetApiKey": {
           "type": "string",

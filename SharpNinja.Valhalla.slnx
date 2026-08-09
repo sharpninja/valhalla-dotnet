@@ -1,7 +1,11 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/SharpNinja.Valhalla.Generation.Benchmarks/SharpNinja.Valhalla.Generation.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/SharpNinja.Valhalla/SharpNinja.Valhalla.csproj" />
     <Project Path="src/SharpNinja.Valhalla.Generation/SharpNinja.Valhalla.Generation.csproj" />
+    <Project Path="src/SharpNinja.Valhalla.Generation.Tool/SharpNinja.Valhalla.Generation.Tool.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SharpNinja.Valhalla.Generation.Tests/SharpNinja.Valhalla.Generation.Tests.csproj" />

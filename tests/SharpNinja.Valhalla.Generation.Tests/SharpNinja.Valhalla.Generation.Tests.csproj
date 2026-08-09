@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpNinja.Valhalla.Generation\SharpNinja.Valhalla.Generation.csproj" />
+    <ProjectReference Include="..\..\src\SharpNinja.Valhalla.Generation.Tool\SharpNinja.Valhalla.Generation.Tool.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -75,25 +75,37 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
             int degree = Math.Min(
                 validated.Options.MaxDegreeOfParallelism,
                 memoryBoundedDegree);
-            var parallelOptions = new ParallelOptions
+            int workerCount = Math.Min(degree, orderedTiles.Length);
+            int nextTileIndex = -1;
+            var startGate = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var workers = new Task[workerCount];
+            for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
             {
-                CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = degree,
-            };
+                workers[workerIndex] = RunWorkerAsync();
+            }
 
-            await System.Threading.Tasks.Parallel.ForEachAsync(
-                Enumerable.Range(0, orderedTiles.Length),
-                parallelOptions,
-                async (index, token) =>
+            startGate.SetResult();
+            await Task.WhenAll(workers).ConfigureAwait(false);
+
+            async Task RunWorkerAsync()
+            {
+                int active = Interlocked.Increment(ref activeWorkers);
+                UpdatePeak(ref peakConcurrency, active);
+                try
                 {
-                    await Task.Yield();
-                    int active = Interlocked.Increment(ref activeWorkers);
-                    UpdatePeak(ref peakConcurrency, active);
-                    try
+                    await startGate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    while (true)
                     {
+                        int index = Interlocked.Increment(ref nextTileIndex);
+                        if (index >= orderedTiles.Length)
+                        {
+                            return;
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
                         TileContext context = orderedTiles[index];
-                        token.ThrowIfCancellationRequested();
-                        byte[] bytes = BuildTile(context, validated.Options, token);
+                        byte[] bytes = BuildTile(context, validated.Options, cancellationToken);
                         GraphTile.Create(context.GraphId, bytes);
                         long totalBytes = Interlocked.Add(ref bytesWritten, bytes.Length);
                         if (totalBytes > validated.Options.ScratchDiskBudgetBytes)
@@ -111,7 +123,10 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                             Directory.CreateDirectory(stagingParent);
                         }
 
-                        await File.WriteAllBytesAsync(stagingPath, bytes, token).ConfigureAwait(false);
+                        await File.WriteAllBytesAsync(
+                            stagingPath,
+                            bytes,
+                            cancellationToken).ConfigureAwait(false);
                         artifacts[index] = new TileBuildArtifact(
                             relativePath.Replace(Path.DirectorySeparatorChar, '/'),
                             Convert.ToHexString(SHA256.HashData(bytes)),
@@ -122,11 +137,12 @@ public sealed class ManagedTransitTileBuilder : ITransitTileBuilder
                             context.Schedules.Count,
                             context.Transfers.Count);
                     }
-                    finally
-                    {
-                        Interlocked.Decrement(ref activeWorkers);
-                    }
-                }).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref activeWorkers);
+                }
+            }
 
             var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
             int nodes = 0;
