@@ -70,6 +70,19 @@ public interface IOsmPbfVisitor
 }
 
 /// <summary>
+/// Optional high-throughput visitor contract for callback-scoped way references. Implementations
+/// must consume <paramref name="nodeRefs"/> synchronously and must not retain the span.
+/// </summary>
+public interface IOsmPbfSpanVisitor : IOsmPbfVisitor
+{
+    /// <summary>Called for an OSM way without materializing its ordered node references.</summary>
+    void Way(
+        ulong id,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> tags);
+}
+
+/// <summary>
 /// Faithful OSM PBF reader. Streams an <c>.osm.pbf</c> file, inflates each blob, parses the
 /// HeaderBlock / PrimitiveBlock messages, performs string-table + delta decoding, and drives
 /// an <see cref="IOsmPbfVisitor"/>. No external OSM or protobuf dependency.

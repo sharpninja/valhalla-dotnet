@@ -60,6 +60,49 @@ public sealed class StoredOsmPbfEntitySourceTests
     }
 
     [Fact]
+    public async Task Replay_ReusesCallbackScopedDataAndInternedStrings()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-dotnet-source-reuse-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var pbfPath = Path.Combine(root, "fixture.osm.pbf");
+        await File.WriteAllBytesAsync(
+            pbfPath,
+            TestOsmPbfFixtureBuilder.Create(
+                OsmPbfCompressionKind.Raw,
+                dataBlockCount: 2),
+            TestContext.Current.CancellationToken);
+
+        try
+        {
+            using var source = await StoredOsmPbfEntitySource.CreateAsync(
+                [pbfPath],
+                Path.Combine(root, "intermediate"),
+                IntermediateStorageMode.Memory,
+                memoryBudgetBytes: 8 * 1024 * 1024,
+                scratchDiskBudgetBytes: 32 * 1024 * 1024,
+                TestContext.Current.CancellationToken);
+            var visitor = new TagIdentityVisitor();
+
+            source.VisitFile(
+                0,
+                OsmPbfEntityPass.Ways,
+                visitor,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(2, visitor.WayCount);
+            Assert.Equal(2, visitor.SpanWayCount);
+            Assert.True(visitor.ReusedTransientTags);
+            Assert.True(visitor.ReusedInternedStrings);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Replay_HonorsCancellationDuringPass()
     {
         var root = Path.Combine(
@@ -96,6 +139,88 @@ public sealed class StoredOsmPbfEntitySourceTests
         finally
         {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class TagIdentityVisitor : IOsmPbfSpanVisitor
+    {
+        private IReadOnlyDictionary<string, string>? firstTags;
+        private string? firstKey;
+        private string? firstValue;
+
+        public int WayCount { get; private set; }
+
+        public int SpanWayCount { get; private set; }
+
+        public bool ReusedTransientTags { get; private set; } = true;
+
+        public bool ReusedInternedStrings { get; private set; } = true;
+
+        public void Header(
+            double? minLat,
+            double? minLon,
+            double? maxLat,
+            double? maxLon,
+            IReadOnlyList<string> requiredFeatures)
+        {
+        }
+
+        public void Node(
+            ulong id,
+            double lat,
+            double lon,
+            IReadOnlyDictionary<string, string> tags)
+        {
+        }
+
+        public void Way(
+            ulong id,
+            IReadOnlyList<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags) =>
+            ObserveWay(nodeRefs, tags);
+
+        public void Way(
+            ulong id,
+            ReadOnlySpan<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags)
+        {
+            SpanWayCount++;
+            ObserveWay(nodeRefs.ToArray(), tags);
+        }
+
+        private void ObserveWay(
+            IReadOnlyList<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags)
+        {
+            Assert.Equal(2, nodeRefs.Count);
+            Assert.Equal(1UL, nodeRefs[0]);
+            Assert.Equal(2UL, nodeRefs[1]);
+            Assert.IsType<OsmPbfTransientTagDictionary>(tags);
+            KeyValuePair<string, string> tag = Assert.Single(tags);
+            if (firstTags is null)
+            {
+                firstTags = tags;
+                firstKey = tag.Key;
+                firstValue = tag.Value;
+            }
+            else
+            {
+                ReusedTransientTags &= ReferenceEquals(firstTags, tags);
+                ReusedInternedStrings &=
+                    ReferenceEquals(firstKey, tag.Key) &&
+                    ReferenceEquals(firstValue, tag.Value);
+            }
+
+            Assert.Equal("highway", tag.Key);
+            Assert.Equal("residential", tag.Value);
+            WayCount++;
+        }
+
+        public void Relation(
+            ulong id,
+            IReadOnlyList<OsmRelationMember> members,
+            IReadOnlyDictionary<string, string> tags)
+        {
         }
     }
 

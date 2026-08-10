@@ -32,6 +32,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 using SharpNinja.Valhalla.Baldr;
 
@@ -273,7 +274,7 @@ public sealed class PbfGraphParser
         _access.Sort((a, b) => a.WayId().CompareTo(b.WayId()));
     }
 
-    private sealed class WayVisitor : IOsmPbfVisitor
+    private sealed class WayVisitor : IOsmPbfSpanVisitor
     {
         private readonly PbfGraphParser _p;
 
@@ -287,7 +288,30 @@ public sealed class PbfGraphParser
         {
         }
 
-        public void Way(ulong id, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> tags) =>
+        public void Way(
+            ulong id,
+            IReadOnlyList<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags)
+        {
+            if (nodeRefs is ulong[] array)
+            {
+                _p.TransformAndAddWay(id, array, tags);
+                return;
+            }
+
+            if (nodeRefs is List<ulong> list)
+            {
+                _p.TransformAndAddWay(id, CollectionsMarshal.AsSpan(list), tags);
+                return;
+            }
+
+            _p.TransformAndAddWay(id, nodeRefs.ToArray(), tags);
+        }
+
+        public void Way(
+            ulong id,
+            ReadOnlySpan<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags) =>
             _p.TransformAndAddWay(id, nodeRefs, tags);
 
         public void Relation(ulong id, IReadOnlyList<OsmRelationMember> members, IReadOnlyDictionary<string, string> tags)
@@ -297,10 +321,13 @@ public sealed class PbfGraphParser
 
     // transform_way + way() fused. transform_way filters degenerate/closed-area ways and applies
     // the Lua way transform; way() then drives the tag handlers.
-    private void TransformAndAddWay(ulong wayId, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> rawTags)
+    private void TransformAndAddWay(
+        ulong wayId,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> rawTags)
     {
         // Do not add ways with < 2 nodes.
-        if (nodeRefs.Count < 2)
+        if (nodeRefs.Length < 2)
         {
             return;
         }
@@ -330,7 +357,10 @@ public sealed class PbfGraphParser
         Way(wayId, nodeRefs, tags);
     }
 
-    private void Way(ulong wayId, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> tags)
+    private void Way(
+        ulong wayId,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> tags)
     {
         _osmid = wayId;
         if (_osmid < _lastWay)
@@ -381,7 +411,7 @@ public sealed class PbfGraphParser
         Dictionary<ulong, int> loopNodes = _loopNodesScratch;
         loopNodes.Clear();
         int wayNodeIndex = _wayNodes.Count;
-        for (int i = 0; i < nodeRefs.Count; ++i)
+        for (int i = 0; i < nodeRefs.Length; ++i)
         {
             ulong node = nodeRefs[i];
             var osmNode = new OSMNode(node);
@@ -393,12 +423,12 @@ public sealed class PbfGraphParser
             }
 
             int firstOccurrence = loopNodes[node];
-            bool flattening = firstOccurrence > 0 && i < nodeRefs.Count - 1 &&
+            bool flattening = firstOccurrence > 0 && i < nodeRefs.Length - 1 &&
                               nodeRefs[i + 1] == nodeRefs[firstOccurrence - 1];
-            bool unflattening = i > 0 && firstOccurrence < nodeRefs.Count - 1 &&
+            bool unflattening = i > 0 && firstOccurrence < nodeRefs.Length - 1 &&
                                 nodeRefs[i - 1] == nodeRefs[firstOccurrence + 1];
             osmNode.SetFlatLoop(flattening || unflattening);
-            osmNode.SetIntersection(i == 0 || i == nodeRefs.Count - 1);
+            osmNode.SetIntersection(i == 0 || i == nodeRefs.Length - 1);
 
             _wayNodes.Add(new OSMWayNode
             {
@@ -419,7 +449,7 @@ public sealed class PbfGraphParser
         }
 
         _osmdata.OsmWayCount++;
-        _osmdata.OsmWayNodeCount += (ulong)nodeRefs.Count;
+        _osmdata.OsmWayNodeCount += (ulong)nodeRefs.Length;
 
         // Reset per-way scratch.
         _defaultSpeed = 0; _maxSpeed = 0; _averageSpeed = 0; _advisorySpeed = 0;
@@ -431,7 +461,7 @@ public sealed class PbfGraphParser
         _wayRef = string.Empty;
 
         _way = new OSMWay(_osmid);
-        _way.SetNodeCount((uint)nodeRefs.Count);
+        _way.SetNodeCount((uint)nodeRefs.Length);
         _osmAccess = new OSMAccess(_osmid);
         _hasUserTags = false;
 
@@ -542,7 +572,7 @@ public sealed class PbfGraphParser
         }
 
         // Infer cul-de-sac if a road edge is a loop and is low classification.
-        if (!_way.Roundabout() && loopNodes.Count != nodeRefs.Count && _way.UseValue() == Use.Road &&
+        if (!_way.Roundabout() && loopNodes.Count != nodeRefs.Length && _way.UseValue() == Use.Road &&
             (byte)_way.RoadClassValue() > (byte)RoadClass.Tertiary)
         {
             _culdesac.AddCandidate(_way.WayId(), _ways.Count, nodeRefs);
@@ -2752,7 +2782,10 @@ public sealed class PbfGraphParser
         private Dictionary<ulong, List<ulong>> _nodeToLoopWay = new();
         private Dictionary<ulong, LoopMeta> _loopsMeta = new();
 
-        public void AddCandidate(ulong osmWayId, int osmWayIndex, IReadOnlyList<ulong> osmNodeIds)
+        public void AddCandidate(
+            ulong osmWayId,
+            int osmWayIndex,
+            ReadOnlySpan<ulong> osmNodeIds)
         {
             _loopsMeta[osmWayId] = new LoopMeta(osmWayIndex);
             foreach (ulong nodeId in osmNodeIds)

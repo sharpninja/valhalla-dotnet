@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
-using System.Text;
 using SharpNinja.Valhalla.Generation.Storage;
 using SharpNinja.Valhalla.Mjolnir;
 
@@ -20,6 +19,8 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
     private readonly IntermediateBlobStore payloads;
     private readonly long[,] fileCounts;
     private readonly int[] maximumPayloadLengths = new int[3];
+    private readonly Dictionary<string, int> internedStringIds = new(StringComparer.Ordinal);
+    private readonly List<string> internedStrings = [];
     private int completedReplayPassCount;
     private bool disposed;
 
@@ -166,6 +167,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         long count = fileCounts[fileOrdinal, kindIndex];
         byte[] replayBuffer = ArrayPool<byte>.Shared.Rent(
             Math.Max(1, maximumPayloadLengths[kindIndex]));
+        var transientTags = new OsmPbfTransientTagDictionary();
         try
         {
             for (long index = 0; index < count; index++)
@@ -183,7 +185,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                     0,
                     record.PayloadLength);
                 payloads.Read(reference, payload);
-                Replay(pass, record, payload, visitor);
+                Replay(pass, record, payload, visitor, transientTags);
             }
         }
         finally
@@ -223,13 +225,27 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                 memoryBudgetBytes,
                 scratchDiskBudgetBytes));
 
-    private static void Replay(
+    private int InternString(string value)
+    {
+        if (internedStringIds.TryGetValue(value, out int id))
+        {
+            return id;
+        }
+
+        id = internedStrings.Count;
+        internedStrings.Add(value);
+        internedStringIds.Add(value, id);
+        return id;
+    }
+
+    private void Replay(
         OsmPbfEntityPass pass,
         StoredEntityRecord record,
         ReadOnlySpan<byte> payload,
-        IOsmPbfVisitor visitor)
+        IOsmPbfVisitor visitor,
+        OsmPbfTransientTagDictionary transientTags)
     {
-        var reader = new PayloadReader(payload);
+        var reader = new PayloadReader(payload, internedStrings);
         switch (pass)
         {
             case OsmPbfEntityPass.Nodes:
@@ -237,19 +253,26 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                     record.Id,
                     record.Latitude,
                     record.Longitude,
-                    reader.ReadTags());
+                    reader.ReadTags(transientTags));
                 break;
             case OsmPbfEntityPass.Ways:
-                visitor.Way(
-                    record.Id,
-                    reader.ReadUInt64List(),
-                    reader.ReadTags());
+                ReadOnlySpan<ulong> nodeReferences = reader.ReadUInt64Span();
+                IReadOnlyDictionary<string, string> wayTags = reader.ReadTags(transientTags);
+                if (visitor is IOsmPbfSpanVisitor spanVisitor)
+                {
+                    spanVisitor.Way(record.Id, nodeReferences, wayTags);
+                }
+                else
+                {
+                    visitor.Way(record.Id, nodeReferences.ToArray(), wayTags);
+                }
+
                 break;
             case OsmPbfEntityPass.Relations:
                 visitor.Relation(
                     record.Id,
                     reader.ReadMembers(),
-                    reader.ReadTags());
+                    reader.ReadTags(transientTags));
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(pass), pass, null);
@@ -317,7 +340,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                 OsmRelationMemberEntity member = relation.GetMember(index);
                 WriteUInt64(writer, member.Id);
                 WriteInt32(writer, (int)member.Type);
-                WriteString(writer, member.Role);
+                WriteInt32(writer, source.InternString(member.Role));
             }
 
             WriteTags(writer, relation.Tags);
@@ -351,7 +374,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                     payload.Length));
         }
 
-        private static void WriteTags(
+        private void WriteTags(
             ArrayBufferWriter<byte> destination,
             OsmTagView tags)
         {
@@ -359,8 +382,8 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
             for (var index = 0; index < tags.Count; index++)
             {
                 OsmTag tag = tags[index];
-                WriteString(destination, tag.Key);
-                WriteString(destination, tag.Value);
+                WriteInt32(destination, source.InternString(tag.Key));
+                WriteInt32(destination, source.InternString(tag.Value));
             }
         }
 
@@ -378,33 +401,36 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
             destination.Advance(sizeof(ulong));
         }
 
-        private static void WriteString(ArrayBufferWriter<byte> destination, string value)
-        {
-            int byteCount = Encoding.UTF8.GetByteCount(value);
-            WriteInt32(destination, byteCount);
-            Span<byte> target = destination.GetSpan(byteCount);
-            Encoding.UTF8.GetBytes(value, target);
-            destination.Advance(byteCount);
-        }
     }
 
     private ref struct PayloadReader
     {
         private readonly ReadOnlySpan<byte> payload;
+        private readonly IReadOnlyList<string> internedStrings;
         private int offset;
 
-        public PayloadReader(ReadOnlySpan<byte> payload)
+        public PayloadReader(
+            ReadOnlySpan<byte> payload,
+            IReadOnlyList<string> internedStrings)
         {
             this.payload = payload;
+            this.internedStrings = internedStrings;
         }
 
-        public ulong[] ReadUInt64List()
+        public ReadOnlySpan<ulong> ReadUInt64Span()
         {
             int count = ReadCount();
+            ReadOnlySpan<byte> bytes = Take(checked(count * sizeof(ulong)));
+            if (BitConverter.IsLittleEndian)
+            {
+                return MemoryMarshal.Cast<byte, ulong>(bytes);
+            }
+
             var result = new ulong[count];
             for (var index = 0; index < count; index++)
             {
-                result[index] = ReadUInt64();
+                result[index] = BinaryPrimitives.ReadUInt64LittleEndian(
+                    bytes.Slice(index * sizeof(ulong), sizeof(ulong)));
             }
 
             return result;
@@ -425,21 +451,18 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
             return result;
         }
 
-        public IReadOnlyDictionary<string, string> ReadTags()
+        public IReadOnlyDictionary<string, string> ReadTags(
+            OsmPbfTransientTagDictionary destination)
         {
+            destination.Clear();
             int count = ReadCount();
-            if (count == 0)
-            {
-                return EmptyTags.Instance;
-            }
-
-            var result = new OsmPbfTransientTagDictionary(count);
+            destination.EnsureCapacity(count);
             for (var index = 0; index < count; index++)
             {
-                result.Add(ReadString(), ReadString());
+                destination.Add(ReadString(), ReadString());
             }
 
-            return result;
+            return destination;
         }
 
         public void RequireEnd()
@@ -477,8 +500,14 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
 
         private string ReadString()
         {
-            int length = ReadCount();
-            return Encoding.UTF8.GetString(Take(length));
+            int id = ReadInt32();
+            if ((uint)id >= (uint)internedStrings.Count)
+            {
+                throw new InvalidDataException(
+                    "Stored OSM entity payload contains an invalid string identifier.");
+            }
+
+            return internedStrings[id];
         }
 
         private ReadOnlySpan<byte> Take(int length)
@@ -495,30 +524,4 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         }
     }
 
-    private sealed class EmptyTags : IReadOnlyDictionary<string, string>
-    {
-        public static EmptyTags Instance { get; } = new();
-
-        public int Count => 0;
-
-        public IEnumerable<string> Keys => [];
-
-        public IEnumerable<string> Values => [];
-
-        public string this[string key] => throw new KeyNotFoundException();
-
-        public bool ContainsKey(string key) => false;
-
-        public IEnumerator<KeyValuePair<string, string>> GetEnumerator() =>
-            Enumerable.Empty<KeyValuePair<string, string>>().GetEnumerator();
-
-        public bool TryGetValue(string key, out string value)
-        {
-            value = string.Empty;
-            return false;
-        }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
-            GetEnumerator();
-    }
 }
