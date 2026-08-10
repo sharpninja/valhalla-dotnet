@@ -357,6 +357,25 @@ public sealed class PbfGraphParser
         Way(wayId, nodeRefs, tags);
     }
 
+    internal static ref int GetOrAddLoopNodeOccurrence(
+        Dictionary<ulong, int> occurrences,
+        ulong nodeId,
+        int currentIndex,
+        out bool inserted)
+    {
+        ref int occurrence = ref CollectionsMarshal.GetValueRefOrAddDefault(
+            occurrences,
+            nodeId,
+            out bool exists);
+        inserted = !exists;
+        if (inserted)
+        {
+            occurrence = currentIndex;
+        }
+
+        return ref occurrence;
+    }
+
     private void Way(
         ulong wayId,
         ReadOnlySpan<ulong> nodeRefs,
@@ -416,13 +435,12 @@ public sealed class PbfGraphParser
             ulong node = nodeRefs[i];
             var osmNode = new OSMNode(node);
 
-            bool inserted = !loopNodes.ContainsKey(node);
-            if (inserted)
-            {
-                loopNodes[node] = i;
-            }
-
-            int firstOccurrence = loopNodes[node];
+            ref int occurrence = ref GetOrAddLoopNodeOccurrence(
+                loopNodes,
+                node,
+                i,
+                out bool inserted);
+            int firstOccurrence = occurrence;
             bool flattening = firstOccurrence > 0 && i < nodeRefs.Length - 1 &&
                               nodeRefs[i + 1] == nodeRefs[firstOccurrence - 1];
             bool unflattening = i > 0 && firstOccurrence < nodeRefs.Length - 1 &&
@@ -444,7 +462,7 @@ public sealed class PbfGraphParser
                 OSMWayNode mid = _wayNodes[midIndex];
                 mid.Node.SetIntersection(true);
                 _wayNodes[midIndex] = mid;
-                loopNodes[node] = i;
+                occurrence = i;
             }
         }
 

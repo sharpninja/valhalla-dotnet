@@ -480,6 +480,29 @@ public class PbfGraphParserTests
         Assert.Equal(400u, data.LaneConnectivityMap[401][0].FromWayId);
     }
 
+    [Fact]
+    public void LoopNodeOccurrence_UsesOneMutableEntryForInsertAndRepeat()
+    {
+        var occurrences = new Dictionary<ulong, int>();
+
+        ref int insertedOccurrence = ref PbfGraphParser.GetOrAddLoopNodeOccurrence(
+            occurrences,
+            nodeId: 42,
+            currentIndex: 3,
+            out bool inserted);
+        Assert.True(inserted);
+        Assert.Equal(3, insertedOccurrence);
+
+        insertedOccurrence = 7;
+        ref int repeatedOccurrence = ref PbfGraphParser.GetOrAddLoopNodeOccurrence(
+            occurrences,
+            nodeId: 42,
+            currentIndex: 11,
+            out bool repeatedInserted);
+        Assert.False(repeatedInserted);
+        Assert.Equal(7, repeatedOccurrence);
+    }
+
     // ---- cul-de-sac inference -------------------------------------------------
 
     [Fact]
