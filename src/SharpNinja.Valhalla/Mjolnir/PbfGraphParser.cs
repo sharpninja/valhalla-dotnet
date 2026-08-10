@@ -317,7 +317,9 @@ public sealed class PbfGraphParser
         }
 
         // Apply the Lua way tag transform. Empty tags -> the empty transform -> dropped.
-        var tags = new Dictionary<string, string>(rawTags);
+        Dictionary<string, string> tags =
+            rawTags as OsmPbfTransientTagDictionary ??
+            new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
         int filter = WayTagTransform.Transform(tags);
         if (filter != 0 || tags.Count == 0)
         {
@@ -663,9 +665,9 @@ public sealed class PbfGraphParser
         }
         else
         {
-            var transformedTags = new Dictionary<string, string>(
-                rawTags,
-                StringComparer.Ordinal);
+            Dictionary<string, string> transformedTags =
+                rawTags as OsmPbfTransientTagDictionary ??
+                new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
             NodeTagTransform.Transform(transformedTags);
             tags = transformedTags;
         }

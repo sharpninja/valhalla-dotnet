@@ -433,9 +433,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                 return EmptyTags.Instance;
             }
 
-            var result = new Dictionary<string, string>(
-                count,
-                StringComparer.Ordinal);
+            var result = new OsmPbfTransientTagDictionary(count);
             for (var index = 0; index < count; index++)
             {
                 result.Add(ReadString(), ReadString());

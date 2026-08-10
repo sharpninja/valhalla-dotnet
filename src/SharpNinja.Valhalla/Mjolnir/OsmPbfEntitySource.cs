@@ -30,6 +30,23 @@ public interface IOsmPbfEntitySource
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Mutable tag ownership marker for PBF sources that create callback-scoped dictionaries. Visitors
+/// may transform this dictionary in place during the callback; callers must not retain or reuse it.
+/// </summary>
+public sealed class OsmPbfTransientTagDictionary : Dictionary<string, string>
+{
+    public OsmPbfTransientTagDictionary()
+        : base(StringComparer.Ordinal)
+    {
+    }
+
+    public OsmPbfTransientTagDictionary(int capacity)
+        : base(capacity, StringComparer.Ordinal)
+    {
+    }
+}
+
 internal sealed class FileOsmPbfEntitySource : IOsmPbfEntitySource
 {
     private readonly IReadOnlyList<string> pbfPaths;

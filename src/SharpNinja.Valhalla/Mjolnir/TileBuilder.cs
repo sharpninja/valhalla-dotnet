@@ -402,7 +402,8 @@ public static class TileBuilder
         // ---- kValidate --------------------------------------------------------
         stageStopwatch.Restart();
         result.ValidatorStats = GraphValidator.Validate(
-            MakeReaderConfig(tileDir, config));
+            MakeReaderConfig(tileDir, config),
+            cancellationToken);
         stageStopwatch.Stop();
         result.RecordStageDuration("validate", stageStopwatch.Elapsed);
         cancellationToken.ThrowIfCancellationRequested();

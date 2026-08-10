@@ -22,6 +22,86 @@ public sealed class PbfGraphParserAllocationTests
         Assert.InRange(allocated, 0, 60_000_000);
     }
 
+    [Fact]
+    public void TransientWayTags_AvoidSecondDictionaryMaterialization()
+    {
+        const int wayCount = 10_000;
+
+        _ = MeasureWayAllocations(100, transientTags: false);
+        _ = MeasureWayAllocations(100, transientTags: true);
+
+        long copiedAllocations = MeasureWayAllocations(wayCount, transientTags: false);
+        long transientAllocations = MeasureWayAllocations(wayCount, transientTags: true);
+
+        Assert.True(
+            transientAllocations <= copiedAllocations - 2_000_000,
+            $"Expected transient tags to avoid at least 2 MB of allocation; " +
+            $"copied={copiedAllocations}, transient={transientAllocations}.");
+    }
+
+    private static long MeasureWayAllocations(int wayCount, bool transientTags)
+    {
+        var parser = new PbfGraphParser();
+        var source = new SyntheticTaggedWaySource(wayCount, transientTags);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        OSMData data = parser.Parse(
+            source,
+            TestContext.Current.CancellationToken);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal((ulong)wayCount, data.OsmWayCount);
+        return allocated;
+    }
+
+    private sealed class SyntheticTaggedWaySource : IOsmPbfEntitySource
+    {
+        private readonly int wayCount;
+        private readonly bool transientTags;
+
+        public SyntheticTaggedWaySource(int wayCount, bool transientTags)
+        {
+            this.wayCount = wayCount;
+            this.transientTags = transientTags;
+        }
+
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            if (pass != OsmPbfEntityPass.Ways)
+            {
+                return;
+            }
+
+            for (var index = 0; index < wayCount; index++)
+            {
+                if ((index & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                IReadOnlyDictionary<string, string> tags = transientTags
+                    ? new OsmPbfTransientTagDictionary(1)
+                    {
+                        ["highway"] = "residential",
+                    }
+                    : new Dictionary<string, string>(1, StringComparer.Ordinal)
+                    {
+                        ["highway"] = "residential",
+                    };
+                ulong firstNode = checked((ulong)(index * 2 + 1));
+                visitor.Way(
+                    checked((ulong)(index + 1)),
+                    [firstNode, firstNode + 1],
+                    tags);
+            }
+        }
+    }
+
     private sealed class SyntheticUntaggedNodeSource : IOsmPbfEntitySource
     {
         private static readonly IReadOnlyDictionary<string, string> EmptyTags =
