@@ -183,6 +183,28 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
     }
 
     [Fact]
+    public void BuildTiles_StagesOutputBesideDestinationForCrossVolumeAtomicPromotion()
+    {
+        string outputDirectory = Path.Combine(scratch, "output-volume", "tiles");
+        System.Reflection.MethodInfo? method = typeof(ValhallaGenerationCli).GetMethod(
+            "CreateStagingDirectoryPath",
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(method);
+        string stagingDirectory = Assert.IsType<string>(
+            method.Invoke(null, [outputDirectory, Guid.Empty]));
+
+        Assert.Equal(
+            Path.GetDirectoryName(Path.GetFullPath(outputDirectory)),
+            Path.GetDirectoryName(stagingDirectory));
+        Assert.StartsWith(
+            ".tiles.incoming-",
+            Path.GetFileName(stagingDirectory),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BuildTiles_UsesManagedSinglePassComposition()
     {
         Directory.CreateDirectory(scratch);

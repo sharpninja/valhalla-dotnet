@@ -70,6 +70,20 @@ public sealed class GenerationBuildContractTests
         Assert.DoesNotContain("build/_build.csproj", solution, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("build\\_build.csproj", solution, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void QualifyNashville_RunsOneQualificationMatrix()
+    {
+        string root = RepositoryRoot.Find();
+        string build = File.ReadAllText(Path.Combine(root, "build", "GenerationBuild.cs"));
+        int start = build.IndexOf("Target QualifyNashville =>", StringComparison.Ordinal);
+        int end = build.IndexOf("Target QualifyLower48 =>", start, StringComparison.Ordinal);
+        string target = build[start..end];
+
+        Assert.Contains("ValidateGenerationContainer", target, StringComparison.Ordinal);
+        Assert.DoesNotContain("BenchmarkNashville", target, StringComparison.Ordinal);
+        Assert.Equal(1, target.Split("\"qualify-nashville\"", StringSplitOptions.None).Length - 1);
+    }
 }
 
 public sealed class GenerationPackageBoundaryTests

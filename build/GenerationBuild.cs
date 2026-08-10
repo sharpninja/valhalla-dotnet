@@ -174,7 +174,7 @@ partial class Build
 
     Target QualifyNashville => _ => _
         .Description("Enforce all Nashville performance, memory, size, and determinism thresholds.")
-        .DependsOn(ValidateGenerationContainer, BenchmarkNashville)
+        .DependsOn(ValidateGenerationContainer)
         .Executes(() =>
         {
             RequireExistingFile(NashvilleConfig, "NashvilleConfig");

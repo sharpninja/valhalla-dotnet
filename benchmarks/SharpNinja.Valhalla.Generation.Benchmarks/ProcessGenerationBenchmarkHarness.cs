@@ -45,6 +45,28 @@ public sealed record ProcessCommandTemplate
 
     public IReadOnlyDictionary<string, string> Environment { get; init; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public DockerBenchmarkCommand? Docker { get; init; }
+}
+
+public sealed record DockerBenchmarkCommand
+{
+    public required string Image { get; init; }
+
+    public string? EntryPoint { get; init; }
+
+    public string InputFileName { get; init; } = "input.osm.pbf";
+
+    public IReadOnlyDictionary<string, string> AdditionalInputFiles { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public double CpuLimit { get; init; } = 1;
+
+    public long MemoryLimitBytes { get; init; } = 1_073_741_824;
+
+    public int PidsLimit { get; init; } = 256;
+
+    public bool UseNativeVolumes { get; init; } = true;
 }
 
 public sealed record GenerationBenchmarkAttempt(
@@ -233,10 +255,13 @@ public sealed partial class ProcessGenerationBenchmarkHarness
         {
             var configuration = JsonSerializer.Deserialize<GenerationBenchmarkConfiguration>(
                 File.ReadAllText(path),
-                JsonOptions);
-            return configuration ??
+                JsonOptions) ??
                 throw new GenerationBenchmarkConfigurationException(
                     "Benchmark configuration is empty.");
+            string configurationDirectory =
+                Path.GetDirectoryName(Path.GetFullPath(path)) ??
+                Environment.CurrentDirectory;
+            return ResolveConfigurationPaths(configuration, configurationDirectory);
         }
         catch (JsonException exception)
         {
@@ -245,6 +270,58 @@ public sealed partial class ProcessGenerationBenchmarkHarness
                 exception);
         }
     }
+
+    private static GenerationBenchmarkConfiguration ResolveConfigurationPaths(
+        GenerationBenchmarkConfiguration configuration,
+        string configurationDirectory) =>
+        configuration with
+        {
+            InputPath = ResolveConfigurationPath(
+                configuration.InputPath,
+                configurationDirectory),
+            Managed = ResolveCommandPaths(
+                configuration.Managed,
+                configurationDirectory),
+            Official = ResolveCommandPaths(
+                configuration.Official,
+                configurationDirectory),
+        };
+
+    private static ProcessCommandTemplate ResolveCommandPaths(
+        ProcessCommandTemplate command,
+        string configurationDirectory)
+    {
+        DockerBenchmarkCommand? docker = command.Docker;
+        if (docker is not null)
+        {
+            docker = docker with
+            {
+                AdditionalInputFiles = docker.AdditionalInputFiles.ToDictionary(
+                    pair => pair.Key,
+                    pair => ResolveConfigurationPath(
+                        pair.Value,
+                        configurationDirectory),
+                    StringComparer.Ordinal),
+            };
+        }
+
+        return command with
+        {
+            WorkingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory)
+                ? command.WorkingDirectory
+                : ResolveConfigurationPath(
+                    command.WorkingDirectory,
+                    configurationDirectory),
+            Docker = docker,
+        };
+    }
+
+    private static string ResolveConfigurationPath(
+        string path,
+        string configurationDirectory) =>
+        Path.IsPathFullyQualified(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(path, configurationDirectory);
 
     private Task<GenerationBenchmarkAttempt> RunNamedAttemptAsync(
         int sequence,
@@ -284,6 +361,21 @@ public sealed partial class ProcessGenerationBenchmarkHarness
             $"{sequence:D2}-{implementation}-{(warmup ? "warmup" : "measured")}");
         EnsureFreshAttemptDirectory(outputDirectory, attemptDirectory);
         var diagnosticBuffer = new BoundedDiagnosticBuffer(MaximumDiagnosticCharacters);
+
+        if (command.Docker is not null)
+        {
+            return await RunDockerAttemptAsync(
+                    sequence,
+                    implementation,
+                    command,
+                    configuration,
+                    attemptDirectory,
+                    managedImage,
+                    officialImage,
+                    warmup,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         using var process = new Process
         {
@@ -370,14 +462,9 @@ public sealed partial class ProcessGenerationBenchmarkHarness
         }
 
         var completedAtUtc = DateTimeOffset.UtcNow;
-        var outputBytes = Directory.Exists(attemptDirectory)
-            ? Directory
-                .EnumerateFiles(attemptDirectory, "*", SearchOption.AllDirectories)
-                .Sum(path => new FileInfo(path).Length)
-            : 0;
-        var treeHash = exitCode == 0 && outputBytes > 0
-            ? ComputeTreeSha256(attemptDirectory)
-            : null;
+        (long outputBytes, string? treeHash) = MeasureAndRemoveAttemptOutput(
+            attemptDirectory,
+            exitCode == 0);
 
         return new GenerationBenchmarkAttempt(
             sequence,
@@ -394,6 +481,78 @@ public sealed partial class ProcessGenerationBenchmarkHarness
             treeHash,
             diagnosticCode,
             exitCode == 0 ? null : Redact(diagnosticBuffer.ToString()));
+    }
+
+    private static async Task<GenerationBenchmarkAttempt> RunDockerAttemptAsync(
+        int sequence,
+        string implementation,
+        ProcessCommandTemplate command,
+        GenerationBenchmarkConfiguration configuration,
+        string attemptDirectory,
+        string? managedImage,
+        string? officialImage,
+        bool warmup,
+        CancellationToken cancellationToken)
+    {
+        DockerBenchmarkCommand docker = command.Docker! with
+        {
+            Image = Expand(
+                command.Docker!.Image,
+                configuration,
+                attemptDirectory,
+                managedImage,
+                officialImage),
+        };
+        string[] arguments = command.Arguments
+            .Select(argument => Expand(
+                argument,
+                configuration,
+                attemptDirectory,
+                managedImage,
+                officialImage))
+            .ToArray();
+        Dictionary<string, string> environment = command.Environment.ToDictionary(
+            pair => pair.Key,
+            pair => Expand(
+                pair.Value,
+                configuration,
+                attemptDirectory,
+                managedImage,
+                officialImage),
+            StringComparer.Ordinal);
+
+        DockerBenchmarkProcessResult process =
+            await DockerGenerationBenchmarkRunner.RunAsync(
+                    docker,
+                    arguments,
+                    environment,
+                    configuration.InputPath,
+                    attemptDirectory,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        bool processSucceeded =
+            process.ExitCode == 0 &&
+            process.DiagnosticCode is null;
+        (long outputBytes, string? treeHash) = MeasureAndRemoveAttemptOutput(
+            attemptDirectory,
+            processSucceeded);
+        bool success = processSucceeded && outputBytes > 0;
+
+        return new GenerationBenchmarkAttempt(
+            sequence,
+            implementation,
+            warmup,
+            success,
+            process.ExitCode,
+            process.StartedAtUtc,
+            process.CompletedAtUtc,
+            process.WallTimeSeconds,
+            process.CpuTimeSeconds,
+            process.PeakMemoryBytes,
+            outputBytes,
+            treeHash,
+            process.DiagnosticCode,
+            process.DiagnosticTail);
     }
 
     private static GenerationBenchmarkSummary Summarize(
@@ -421,7 +580,9 @@ public sealed partial class ProcessGenerationBenchmarkHarness
         var timeRatio = Divide(managedMedian, officialMedian);
         var managedMemory = managed.Select(attempt => attempt.PeakWorkingSetBytes).DefaultIfEmpty().Max();
         var officialMemory = official.Select(attempt => attempt.PeakWorkingSetBytes).DefaultIfEmpty().Max();
-        var memoryRatio = Divide(managedMemory, officialMemory);
+        var memoryRatio = managedMemory > 0 && officialMemory > 0
+            ? Divide(managedMemory, officialMemory)
+            : 0;
         var managedOutput = (long)Median(managed.Select(attempt => (double)attempt.OutputBytes));
         var officialOutput = (long)Median(official.Select(attempt => (double)attempt.OutputBytes));
         var outputRatio = Divide(managedOutput, officialOutput);
@@ -432,6 +593,11 @@ public sealed partial class ProcessGenerationBenchmarkHarness
             .Distinct(StringComparer.Ordinal)
             .OrderBy(hash => hash, StringComparer.Ordinal)
             .ToArray();
+
+        if (managedMemory <= 0 || officialMemory <= 0)
+        {
+            failures.Add("Container memory metrics were unavailable for one or both implementations.");
+        }
 
         if (lower48)
         {
@@ -548,7 +714,34 @@ public sealed partial class ProcessGenerationBenchmarkHarness
             throw new GenerationBenchmarkConfigurationException(
                 $"The {role} command contains a credential-shaped argument.");
         }
+
+        DockerBenchmarkCommand? docker = command.Docker;
+        if (docker is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(command.FileName, "docker", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(docker.Image) ||
+            !docker.UseNativeVolumes ||
+            docker.CpuLimit <= 0 ||
+            docker.MemoryLimitBytes <= 0 ||
+            docker.PidsLimit <= 0 ||
+            !IsSafeContainerFileName(docker.InputFileName) ||
+            docker.AdditionalInputFiles.Any(pair =>
+                !IsSafeContainerFileName(pair.Key) ||
+                !Path.IsPathFullyQualified(pair.Value) ||
+                !File.Exists(pair.Value)))
+        {
+            throw new GenerationBenchmarkConfigurationException(
+                $"The {role} Docker command does not define safe native-volume execution.");
+        }
     }
+
+    private static bool IsSafeContainerFileName(string value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        string.Equals(value, Path.GetFileName(value), StringComparison.Ordinal) &&
+        value is not "." and not "..";
 
     private static string Expand(
         string value,
@@ -561,6 +754,27 @@ public sealed partial class ProcessGenerationBenchmarkHarness
             .Replace("{output}", attemptDirectory, StringComparison.Ordinal)
             .Replace("{managed-image}", managedImage ?? string.Empty, StringComparison.Ordinal)
             .Replace("{official-image}", officialImage ?? string.Empty, StringComparison.Ordinal);
+
+    private static (long OutputBytes, string? TreeHash) MeasureAndRemoveAttemptOutput(
+        string attemptDirectory,
+        bool computeTreeHash)
+    {
+        long outputBytes = Directory.Exists(attemptDirectory)
+            ? Directory
+                .EnumerateFiles(attemptDirectory, "*", SearchOption.AllDirectories)
+                .Sum(path => new FileInfo(path).Length)
+            : 0;
+        string? treeHash = computeTreeHash && outputBytes > 0
+            ? ComputeTreeSha256(attemptDirectory)
+            : null;
+
+        if (Directory.Exists(attemptDirectory))
+        {
+            Directory.Delete(attemptDirectory, recursive: true);
+        }
+
+        return (outputBytes, treeHash);
+    }
 
     private static void EnsureFreshAttemptDirectory(string root, string attemptDirectory)
     {
@@ -670,7 +884,7 @@ public sealed partial class ProcessGenerationBenchmarkHarness
     private static double Divide(double numerator, double denominator) =>
         denominator > 0 && double.IsFinite(denominator)
             ? numerator / denominator
-            : double.PositiveInfinity;
+            : double.MaxValue;
 
     private static void TryKillProcessTree(Process process)
     {

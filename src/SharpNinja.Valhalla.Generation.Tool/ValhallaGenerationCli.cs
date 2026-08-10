@@ -434,11 +434,19 @@ public static partial class ValhallaGenerationCli
         string workingDirectory = GetPath(invocation, "working-directory");
         string outputDirectory = GetPath(invocation, "output");
         EnsureNewOutput(outputDirectory);
-        Directory.CreateDirectory(workingDirectory);
+        string? outputParent = Path.GetDirectoryName(outputDirectory);
+        if (string.IsNullOrWhiteSpace(outputParent))
+        {
+            throw new ValhallaGenerationCliConfigurationException(
+                "The requested output must have a parent directory.");
+        }
 
-        string stagingDirectory = Path.Combine(
-            workingDirectory,
-            $".tiles-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDirectory);
+        Directory.CreateDirectory(outputParent);
+
+        string stagingDirectory = CreateStagingDirectoryPath(
+            outputDirectory,
+            Guid.NewGuid());
         string runWorkingDirectory = Path.Combine(
             workingDirectory,
             $".run-{Guid.NewGuid():N}");
@@ -487,12 +495,6 @@ public static partial class ValhallaGenerationCli
                     DescribeValidationFailure(
                         "Managed road-tile generation failed graph validation.",
                         validation));
-            }
-
-            string? parent = Path.GetDirectoryName(outputDirectory);
-            if (!string.IsNullOrWhiteSpace(parent))
-            {
-                Directory.CreateDirectory(parent);
             }
 
             Directory.Move(stagingDirectory, outputDirectory);
@@ -1040,6 +1042,21 @@ public static partial class ValhallaGenerationCli
         }
 
         return result;
+    }
+
+    private static string CreateStagingDirectoryPath(
+        string outputDirectory,
+        Guid buildId)
+    {
+        string? parent = Path.GetDirectoryName(outputDirectory);
+        string name = Path.GetFileName(outputDirectory);
+        if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(name))
+        {
+            throw new ValhallaGenerationCliConfigurationException(
+                "The requested output must identify a child directory.");
+        }
+
+        return Path.Combine(parent, $".{name}.incoming-{buildId:N}");
     }
 
     private static void EnsureNewOutput(string path)
