@@ -58,6 +58,59 @@ public class PbfGraphParserTests
         }
     }
 
+    [Fact]
+    public void BuildParsedTileSet_ReleasesConsumedParserBuildSequences()
+    {
+        var builder = new PbfBuilder();
+        builder.AddNode(1, 36.1200, -86.6800);
+        builder.AddNode(2, 36.1210, -86.6790);
+        builder.AddNode(3, 36.1220, -86.6780);
+        builder.AddWay(
+            100,
+            new ulong[] { 1, 2, 3 },
+            new()
+            {
+                ["highway"] = "residential",
+                ["access"] = "private",
+            });
+
+        (PbfGraphParser parser, OSMData data) = Run(builder);
+        Assert.NotEmpty(parser.Ways);
+        Assert.NotEmpty(parser.WayNodes);
+        Assert.NotEmpty(parser.Access);
+
+        string tileDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-parser-release-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            TileBuilderResult result = TileBuilder.BuildParsedTileSet(
+                parser,
+                data,
+                tileDirectory,
+                new TileBuilderConfig
+                {
+                    Hierarchy = false,
+                    Shortcuts = false,
+                    MaxDegreeOfParallelism = 1,
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(result.Success);
+            Assert.Empty(parser.Ways);
+            Assert.Empty(parser.WayNodes);
+            Assert.Empty(parser.Access);
+        }
+        finally
+        {
+            if (Directory.Exists(tileDirectory))
+            {
+                Directory.Delete(tileDirectory, recursive: true);
+            }
+        }
+    }
+
     // ---- way-pass behaviors ---------------------------------------------------
 
     [Fact]

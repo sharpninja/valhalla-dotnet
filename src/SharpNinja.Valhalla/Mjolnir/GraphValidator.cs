@@ -145,6 +145,21 @@ public static class GraphValidator
         tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
         stats.TileCount = tileSet.Count;
 
+        // Match Valhalla 3.8.3: tween-only tiles inherit the generation's dataset identity from the
+        // first existing tile instead of publishing a default zero identity.
+        ulong datasetId = 0;
+        if (tileSet.Count > 0)
+        {
+            GraphTile? firstTile = reader.GetGraphTile(tileSet[0]);
+            if (firstTile is null)
+            {
+                throw new InvalidDataException(
+                    "The graph tile set contains an unreadable first tile.");
+            }
+
+            datasetId = firstTile.Header().DatasetId();
+        }
+
         // Accumulator for edges that pass through tiles they neither start nor end in. Faithful
         // port of the tweeners_t accumulated across the per-tile validate() workers.
         var tweeners = new EdgeBinner.Tweeners();
@@ -183,6 +198,7 @@ public static class GraphValidator
                 // Some tiles only exist because an edge's shape passes through them (no nodes/edges);
                 // create an empty tile to hold the spatial index. Faithful port of bin_tweeners.
                 var empty = new GraphTileBuilder(tweenTileId);
+                empty.HeaderBuilder.SetDatasetId(datasetId);
                 empty.StoreTileData(tileDir);
                 tile = GraphTile.Create(tileDir, tweenTileId);
                 if (tile is null)

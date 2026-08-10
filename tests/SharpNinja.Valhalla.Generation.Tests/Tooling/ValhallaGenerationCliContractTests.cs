@@ -132,6 +132,40 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
     }
 
     [Fact]
+    public async Task ValidationFailure_ReportsSecretSafeDiagnostic()
+    {
+        string invalidGraphDirectory = Path.Combine(scratch, "invalid-graph");
+        Directory.CreateDirectory(invalidGraphDirectory);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        int exitCode = await ValhallaGenerationCli.RunAsync(
+        [
+            "validate",
+            "--graph-directory",
+            invalidGraphDirectory,
+            "--working-directory",
+            scratch,
+        ],
+            output,
+            error,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ValhallaGenerationCliExitCodes.ValidationFailure,
+            exitCode);
+        Assert.Contains(
+            "The staged graph does not contain graph tiles.",
+            output.ToString(),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            invalidGraphDirectory,
+            output.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(error.ToString());
+    }
+
+    [Fact]
     public void TransitBuild_RequiresExplicitBuildDate()
     {
         ValhallaGenerationCliConfigurationException exception =
@@ -146,6 +180,80 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
                 ]));
 
         Assert.Contains("--build-date", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BuildTiles_UsesManagedSinglePassComposition()
+    {
+        Directory.CreateDirectory(scratch);
+        string pbfPath = FindRepositoryArtifact(
+            "artifacts",
+            "monaco.osm.pbf");
+        string outputDirectory = Path.Combine(scratch, "managed-tiles");
+        string workingDirectory = Path.Combine(scratch, "managed-work");
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        int exitCode = await ValhallaGenerationCli.RunAsync(
+        [
+            "build-tiles",
+            "--pbf",
+            pbfPath,
+            "--output",
+            outputDirectory,
+            "--working-directory",
+            workingDirectory,
+            "--storage-mode",
+            "MemoryMapped",
+            "--memory-budget-bytes",
+            (64 * 1024 * 1024).ToString(),
+            "--scratch-budget-bytes",
+            (512 * 1024 * 1024).ToString(),
+        ],
+            output,
+            error,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ValhallaGenerationCliExitCodes.Success, exitCode);
+        Assert.Empty(error.ToString());
+        string receiptLine = output
+            .ToString()
+            .Split(
+                Environment.NewLine,
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries)[^1];
+        using JsonDocument receipt = JsonDocument.Parse(receiptLine);
+        JsonElement data = receipt.RootElement.GetProperty("data");
+        Assert.True(data.GetProperty("tileCount").GetInt32() > 0);
+        Assert.Equal(
+            data.GetProperty("pbfDataBlockCount").GetInt32(),
+            data.GetProperty("pbfDecompressionCount").GetInt32() - 1);
+        Assert.True(
+            data.GetProperty("peakIntermediateMemoryBytes").GetInt64() >= 0);
+        Assert.NotEmpty(
+            Directory.GetFiles(
+                outputDirectory,
+                "*.gph",
+                SearchOption.AllDirectories));
+    }
+
+    private static string FindRepositoryArtifact(params string[] parts)
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            string candidate = Path.Combine([directory.FullName, .. parts]);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException(
+            "Repository artifact was not found.",
+            Path.Combine(parts));
     }
 
     public void Dispose()

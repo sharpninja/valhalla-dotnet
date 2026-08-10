@@ -132,6 +132,60 @@ public sealed class GraphValidationParityTests
         }
     }
 
+    [Fact]
+    public void TweenOnlyTiles_PreserveDatasetIdentity()
+    {
+        const ulong datasetId = 123456789;
+        string tileDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-383-tween-dataset-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tileDirectory);
+
+        try
+        {
+            OSMNode west = MakeNode(1, -87.1000, 36.1200, intersection: true);
+            OSMNode east = MakeNode(2, -86.2000, 36.1200, intersection: true);
+            OSMWay way = MakeWay(100);
+            way.SetNodeCount(2);
+            var ways = new List<OSMWay> { way };
+            var wayNodes = new List<OSMWayNode>
+            {
+                MakeWayNode(west, 0, 0),
+                MakeWayNode(east, 0, 1),
+            };
+            var osmData = new OSMData { MaxChangesetId = datasetId };
+            GraphBuilder.Graph graph = GraphBuilder.BuildEdges(ways, wayNodes);
+            Dictionary<GraphId, byte[]> generated =
+                GraphBuilder.Build(osmData, ways, wayNodes, graph);
+
+            foreach ((GraphId graphId, byte[] tileBytes) in generated)
+            {
+                string path = Path.Combine(tileDirectory, GraphTile.FileSuffix(graphId));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, tileBytes);
+            }
+
+            GraphValidator.Validate(
+                new GraphReader.Config { TileDir = tileDirectory },
+                TestContext.Current.CancellationToken);
+
+            string[] validatedTilePaths =
+                Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
+            Assert.True(
+                validatedTilePaths.Length > generated.Count,
+                "The fixture must create at least one tween-only tile.");
+            Assert.All(
+                validatedTilePaths,
+                tilePath => Assert.Equal(
+                    datasetId,
+                    GraphTileHeader.FromBytes(File.ReadAllBytes(tilePath)).DatasetId()));
+        }
+        finally
+        {
+            Directory.Delete(tileDirectory, recursive: true);
+        }
+    }
+
     private static void BuildSyntheticInput(
         out List<OSMWay> ways,
         out List<OSMWayNode> wayNodes)

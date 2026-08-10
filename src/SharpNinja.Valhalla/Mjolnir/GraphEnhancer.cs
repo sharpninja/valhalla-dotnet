@@ -38,6 +38,7 @@
 //   - StreetNamesFactory (ported) drives ConsistentNames exactly.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -92,6 +93,9 @@ public sealed class GraphEnhancer
         /// <summary>Number of pencil-point u-turns.</summary>
         public uint PencilUCount { get; set; }
 
+        /// <summary>Maximum concurrent tile enhancement operations.</summary>
+        public int MaximumConcurrency { get; set; }
+
         /// <summary>Histogram of node densities (0-15).</summary>
         public uint[] DensityCounts { get; } = new uint[16];
     }
@@ -113,19 +117,142 @@ public sealed class GraphEnhancer
     public Dictionary<GraphId, byte[]> Enhance(
         IDictionary<GraphId, byte[]> tiles,
         bool inferInternalIntersections = true,
-        bool inferTurnChannels = true)
+        bool inferTurnChannels = true) =>
+        Enhance(
+            tiles,
+            inferInternalIntersections,
+            inferTurnChannels,
+            maxDegreeOfParallelism: 1,
+            CancellationToken.None);
+
+    /// <summary>
+    /// Enhances local tiles with bounded parallelism, deterministic publication, and cancellation.
+    /// </summary>
+    public Dictionary<GraphId, byte[]> Enhance(
+        IDictionary<GraphId, byte[]> tiles,
+        bool inferInternalIntersections,
+        bool inferTurnChannels,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tiles);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var reader = new InMemoryTileSource(tiles);
-        var result = new Dictionary<GraphId, byte[]>(tiles.Count);
-        foreach (KeyValuePair<GraphId, byte[]> kv in tiles)
+        KeyValuePair<GraphId, byte[]>[] orderedTiles = tiles
+            .OrderBy(static pair => pair.Key.Value)
+            .ToArray();
+        if (maxDegreeOfParallelism == 1 || orderedTiles.Length <= 1)
         {
-            byte[]? enhanced = EnhanceTile(kv.Key.TileBase(), reader, inferInternalIntersections, inferTurnChannels);
-            result[kv.Key.TileBase()] = enhanced ?? kv.Value;
+            var reader = new InMemoryTileSource(tiles);
+            var serialResult = new Dictionary<GraphId, byte[]>(tiles.Count);
+            foreach (KeyValuePair<GraphId, byte[]> pair in orderedTiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[]? enhanced = EnhanceTile(
+                    pair.Key.TileBase(),
+                    reader,
+                    inferInternalIntersections,
+                    inferTurnChannels,
+                    cancellationToken);
+                serialResult[pair.Key.TileBase()] = enhanced ?? pair.Value;
+            }
+
+            _stats.MaximumConcurrency = Math.Max(_stats.MaximumConcurrency, 1);
+            return serialResult;
+        }
+
+        var parallelResult = new ConcurrentDictionary<GraphId, byte[]>();
+        var parallelOptions = new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = maxDegreeOfParallelism,
+        };
+        int activeWorkers = 0;
+        int maximumConcurrency = 0;
+
+        Parallel.ForEach<KeyValuePair<GraphId, byte[]>, EnhancementWorker>(
+            orderedTiles,
+            parallelOptions,
+            () => new EnhancementWorker(
+                new GraphEnhancer(),
+                new InMemoryTileSource(tiles)),
+            (pair, _, worker) =>
+            {
+                int active = Interlocked.Increment(ref activeWorkers);
+                UpdateMaximum(ref maximumConcurrency, active);
+                try
+                {
+                    byte[]? enhanced = worker.Enhancer.EnhanceTile(
+                        pair.Key.TileBase(),
+                        worker.Reader,
+                        inferInternalIntersections,
+                        inferTurnChannels,
+                        cancellationToken);
+                    parallelResult[pair.Key.TileBase()] = enhanced ?? pair.Value;
+                    return worker;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref activeWorkers);
+                }
+            },
+            worker => MergeStatistics(worker.Enhancer.Stats));
+
+        cancellationToken.ThrowIfCancellationRequested();
+        _stats.MaximumConcurrency = Math.Max(
+            _stats.MaximumConcurrency,
+            maximumConcurrency);
+
+        var result = new Dictionary<GraphId, byte[]>(orderedTiles.Length);
+        foreach (KeyValuePair<GraphId, byte[]> pair in orderedTiles)
+        {
+            result.Add(
+                pair.Key.TileBase(),
+                parallelResult[pair.Key.TileBase()]);
         }
 
         return result;
+    }
+
+    private sealed record EnhancementWorker(
+        GraphEnhancer Enhancer,
+        InMemoryTileSource Reader);
+
+    private void MergeStatistics(EnhancerStats statistics)
+    {
+        lock (_stats)
+        {
+            _stats.MaxDensity = Math.Max(_stats.MaxDensity, statistics.MaxDensity);
+            _stats.NotThru += statistics.NotThru;
+            _stats.NoCountryFound += statistics.NoCountryFound;
+            _stats.InternalCount += statistics.InternalCount;
+            _stats.TurnChannelCount += statistics.TurnChannelCount;
+            _stats.RampCount += statistics.RampCount;
+            _stats.PencilUCount += statistics.PencilUCount;
+            for (var index = 0; index < _stats.DensityCounts.Length; index++)
+            {
+                _stats.DensityCounts[index] += statistics.DensityCounts[index];
+            }
+        }
+    }
+
+    private static void UpdateMaximum(ref int maximum, int candidate)
+    {
+        int observed = Volatile.Read(ref maximum);
+        while (candidate > observed)
+        {
+            int prior = Interlocked.CompareExchange(
+                ref maximum,
+                candidate,
+                observed);
+            if (prior == observed)
+            {
+                return;
+            }
+
+            observed = prior;
+        }
     }
 
     /// <summary>
@@ -165,8 +292,13 @@ public sealed class GraphEnhancer
     // ------------------------------------------------------------------
 
     private byte[]? EnhanceTile(
-        GraphId tileId, ITileSource reader, bool inferInternalIntersections, bool inferTurnChannels)
+        GraphId tileId,
+        ITileSource reader,
+        bool inferInternalIntersections,
+        bool inferTurnChannels,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         TileModel? tileOpt = reader.GetTile(tileId);
         if (tileOpt is null || tileOpt.NodeCount == 0)
         {
@@ -187,6 +319,11 @@ public sealed class GraphEnhancer
         // First pass - set headings + local driveability and opposing local index.
         for (int i = 0; i < tile.NodeCount; i++)
         {
+            if ((i & 4095) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var startnode = new GraphId(id, level, (uint)i);
             ref NodeInfo nodeinfo = ref tile.NodeRef(i);
 
@@ -260,12 +397,17 @@ public sealed class GraphEnhancer
         }
 
         // Density index (urban tag not used in this build, so always compute).
-        DensityIndex densityIndex = BuildDensityIndex(reader, tile, level);
+        DensityIndex densityIndex = BuildDensityIndex(reader, tile, level, cancellationToken);
 
         // Second pass - enhance node and edge attributes.
         PointLL baseLl = tile.BaseLl;
         for (int i = 0; i < tile.NodeCount; i++)
         {
+            if ((i & 4095) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var startnode = new GraphId(id, level, (uint)i);
             ref NodeInfo nodeinfo = ref tile.NodeRef(i);
 
@@ -1345,8 +1487,13 @@ public sealed class GraphEnhancer
         return roadlengths;
     }
 
-    private DensityIndex BuildDensityIndex(ITileSource reader, TileModel tile, byte level)
+    private DensityIndex BuildDensityIndex(
+        ITileSource reader,
+        TileModel tile,
+        byte level,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         TileLevel tileLevel = TileHierarchy.Levels()[^1];
 
         // Extend the tile bbox by the density radius, rounded up to the grid cell size.
@@ -1370,6 +1517,11 @@ public sealed class GraphEnhancer
             PointLL nodeBaseLl = tile.BaseLl;
             for (int i = 0; i < tile.NodeCount; i++)
             {
+                if ((i & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 NodeInfo node = tile.NodeRef(i);
                 uint cell = DensityCellId.FromLatLng(node.LatLng(nodeBaseLl));
                 densityGrid.TryGetValue(cell, out float existing);
@@ -1380,6 +1532,7 @@ public sealed class GraphEnhancer
         // Process neighboring tiles within the bbox.
         foreach (int t in tileLevel.Tiles.TileList(bbox))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var neighborId = new GraphId((uint)t, level, 0);
             if (neighborId == tile.Id)
             {
@@ -1395,6 +1548,11 @@ public sealed class GraphEnhancer
             PointLL nbBaseLl = newtile.BaseLl;
             for (int i = 0; i < newtile.NodeCount; i++)
             {
+                if ((i & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 NodeInfo node = newtile.NodeRef(i);
                 PointLL nodeLl = node.LatLng(nbBaseLl);
                 if (bbox.Contains(new PointXY<double>(nodeLl.X, nodeLl.Y)))

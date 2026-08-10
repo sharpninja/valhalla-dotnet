@@ -99,9 +99,9 @@ public sealed class PbfGraphParser
     private readonly bool _useRestArea;
 
     private readonly OSMData _osmdata = new();
-    private readonly List<OSMWay> _ways = new();
-    private readonly List<OSMWayNode> _wayNodes = new();
-    private readonly List<OSMAccess> _access = new();
+    private List<OSMWay> _ways = new();
+    private List<OSMWayNode> _wayNodes = new();
+    private List<OSMAccess> _access = new();
     private readonly List<OSMRestriction> _complexRestrictionsFrom = new();
     private readonly List<OSMRestriction> _complexRestrictionsTo = new();
 
@@ -181,16 +181,42 @@ public sealed class PbfGraphParser
     public IReadOnlyList<OSMRestriction> ComplexRestrictionsTo => _complexRestrictionsTo;
 
     /// <summary>
+    /// Releases the large, one-shot sequences consumed by graph construction while retaining the
+    /// complex restrictions required by the later restriction stage. Replacing the lists, rather
+    /// than clearing them, releases their backing arrays for collection.
+    /// </summary>
+    internal void ReleaseBuildSequences()
+    {
+        _ways = new List<OSMWay>();
+        _wayNodes = new List<OSMWayNode>();
+        _access = new List<OSMAccess>();
+        _culdesac.ReleaseScratch();
+    }
+
+    /// <summary>
     /// Runs the full three-pass parse over the given PBF file paths and returns the populated
     /// <see cref="OSMData"/>. Faithful to ParseWays -&gt; ParseNodes -&gt; ParseRelations.
     /// </summary>
     public OSMData Parse(IReadOnlyList<string> pbfPaths)
     {
         ArgumentNullException.ThrowIfNull(pbfPaths);
+        return Parse(new FileOsmPbfEntitySource(pbfPaths), CancellationToken.None);
+    }
 
-        ParseWays(pbfPaths);
-        ParseNodes(pbfPaths);
-        ParseRelations(pbfPaths);
+    /// <summary>
+    /// Runs the canonical semantic passes over a replayable entity source. This overload lets
+    /// build-time tooling decode each physical PBF block once and replay normalized entities from
+    /// bounded intermediate storage.
+    /// </summary>
+    public OSMData Parse(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        ParseWays(source, cancellationToken);
+        ParseNodes(source, cancellationToken);
+        ParseRelations(source, cancellationToken);
 
         _osmdata.Initialized = true;
         return _osmdata;
@@ -198,14 +224,22 @@ public sealed class PbfGraphParser
 
     // ===== Pass 1: ways ========================================================
 
-    private void ParseWays(IReadOnlyList<string> pbfPaths)
+    private void ParseWays(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new WayVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Ways,
+                new WayVisitor(this),
+                cancellationToken);
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Clarifies types of loop roads and saves fixed ways.
         _culdesac.ClarifyAndFix(_wayNodes, _ways);
@@ -500,17 +534,23 @@ public sealed class PbfGraphParser
 
     // ===== Pass 2: nodes =======================================================
 
-    private void ParseNodes(IReadOnlyList<string> pbfPaths)
+    private void ParseNodes(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
         // Sort way_nodes by node id so we can sequentially update them.
         _wayNodes.Sort((a, b) => a.Node.Osmid.CompareTo(b.Node.Osmid));
 
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _currentWayNodeIndex = 0;
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new NodeVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Nodes,
+                new NodeVisitor(this),
+                cancellationToken);
         }
 
         // Some extracts have no changeset ids; fall back to max osm id.
@@ -518,6 +558,8 @@ public sealed class PbfGraphParser
         {
             _osmdata.MaxChangesetId = _lastNode;
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Re-sort by way index then shape index (for edge building downstream).
         _wayNodes.Sort((a, b) =>
@@ -786,16 +828,23 @@ public sealed class PbfGraphParser
 
     // ===== Pass 3: relations ===================================================
 
-    private void ParseRelations(IReadOnlyList<string> pbfPaths)
+    private void ParseRelations(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _currentWayNodeIndex = 0;
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new RelationVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Relations,
+                new RelationVisitor(this),
+                cancellationToken);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         _complexRestrictionsFrom.Sort((a, b) => a.CompareTo(b));
         _complexRestrictionsTo.Sort((a, b) => a.CompareTo(b));
     }
@@ -2660,8 +2709,8 @@ public sealed class PbfGraphParser
     // Faithful port of the anonymous-namespace culdesac_processor in pbfgraphparser.cc.
     private sealed class CuldesacProcessor
     {
-        private readonly Dictionary<ulong, List<ulong>> _nodeToLoopWay = new();
-        private readonly Dictionary<ulong, LoopMeta> _loopsMeta = new();
+        private Dictionary<ulong, List<ulong>> _nodeToLoopWay = new();
+        private Dictionary<ulong, LoopMeta> _loopsMeta = new();
 
         public void AddCandidate(ulong osmWayId, int osmWayIndex, IReadOnlyList<ulong> osmNodeIds)
         {
@@ -2722,6 +2771,12 @@ public sealed class PbfGraphParser
                     ways[meta.WayIndex] = way;
                 }
             }
+        }
+
+        public void ReleaseScratch()
+        {
+            _nodeToLoopWay = new Dictionary<ulong, List<ulong>>();
+            _loopsMeta = new Dictionary<ulong, LoopMeta>();
         }
 
         private sealed class LoopMeta

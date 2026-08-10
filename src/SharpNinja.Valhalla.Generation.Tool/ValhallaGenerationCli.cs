@@ -7,6 +7,7 @@ using SharpNinja.Valhalla.Generation.Admin;
 using SharpNinja.Valhalla.Generation.BikeShare;
 using SharpNinja.Valhalla.Generation.Elevation;
 using SharpNinja.Valhalla.Generation.Extracts;
+using SharpNinja.Valhalla.Generation.Roads;
 using SharpNinja.Valhalla.Generation.TimeZones;
 using SharpNinja.Valhalla.Generation.Transit;
 using SharpNinja.Valhalla.Generation.Validation;
@@ -438,24 +439,34 @@ public static partial class ValhallaGenerationCli
         string stagingDirectory = Path.Combine(
             workingDirectory,
             $".tiles-{Guid.NewGuid():N}");
+        string runWorkingDirectory = Path.Combine(
+            workingDirectory,
+            $".run-{Guid.NewGuid():N}");
 
         try
         {
-            TileBuilderResult result = await Task.Run(
-                    () =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        return TileBuilder.BuildTileSet(
-                            GetPaths(invocation, "pbf"),
-                            stagingDirectory,
-                            new TileBuilderConfig
-                            {
-                                Hierarchy = true,
-                                Shortcuts = true,
-                            });
-                    },
+            var roadBuilder = new ManagedRoadGraphBuilder();
+            ManagedRoadGraphBuildResult build = await roadBuilder.BuildAsync(
+                    new ManagedRoadGraphBuildRequest(
+                        GetPaths(invocation, "pbf"),
+                        runWorkingDirectory,
+                        stagingDirectory,
+                        GetEnum<IntermediateStorageMode>(
+                            invocation,
+                            "storage-mode"),
+                        GetPositiveInt64(invocation, "memory-budget-bytes"),
+                        GetPositiveInt64(invocation, "scratch-budget-bytes"),
+                        new TileBuilderConfig
+                        {
+                            Hierarchy = true,
+                            Shortcuts = true,
+                            MaxDegreeOfParallelism = GetPositiveInt32(
+                                invocation,
+                                "max-degree-of-parallelism"),
+                        }),
                     cancellationToken)
                 .ConfigureAwait(false);
+            TileBuilderResult result = build.TileBuilderResult;
 
             cancellationToken.ThrowIfCancellationRequested();
             if (!result.Success || result.TileCount == 0)
@@ -473,7 +484,9 @@ public static partial class ValhallaGenerationCli
             if (!validation.IsValid)
             {
                 throw new ValhallaGenerationCliValidationException(
-                    "Managed road-tile generation failed graph validation.");
+                    DescribeValidationFailure(
+                        "Managed road-tile generation failed graph validation.",
+                        validation));
             }
 
             string? parent = Path.GetDirectoryName(outputDirectory);
@@ -489,6 +502,12 @@ public static partial class ValhallaGenerationCli
                 ["tileCount"] = result.TileCount,
                 ["wayCount"] = result.WayCount,
                 ["wayNodeCount"] = result.WayNodeCount,
+                ["pbfDataBlockCount"] = build.PbfMetrics.DataBlockCount,
+                ["pbfDecompressionCount"] = build.PbfMetrics.DecompressionCount,
+                ["peakIntermediateMemoryBytes"] =
+                    build.PeakIntermediateMemoryBytes,
+                ["scratchDiskHighWaterMarkBytes"] =
+                    build.ScratchDiskHighWaterMarkBytes,
                 ["validationReceiptSha256"] = validation.ReceiptSha256,
             };
         }
@@ -497,6 +516,11 @@ public static partial class ValhallaGenerationCli
             if (Directory.Exists(stagingDirectory))
             {
                 Directory.Delete(stagingDirectory, recursive: true);
+            }
+
+            if (Directory.Exists(runWorkingDirectory))
+            {
+                Directory.Delete(runWorkingDirectory, recursive: true);
             }
         }
     }
@@ -542,7 +566,9 @@ public static partial class ValhallaGenerationCli
         if (!result.IsValid)
         {
             throw new ValhallaGenerationCliValidationException(
-                "The graph failed managed validation.");
+                DescribeValidationFailure(
+                    "The graph failed managed validation.",
+                    result));
         }
 
         return new Dictionary<string, object?>
@@ -1106,6 +1132,20 @@ public static partial class ValhallaGenerationCli
         await output.WriteLineAsync(
                 JsonSerializer.Serialize(value, OutputJsonOptions))
             .ConfigureAwait(false);
+    }
+
+    private static string DescribeValidationFailure(
+        string summary,
+        ValhallaGenerationValidationResult result)
+    {
+        string details = string.Join(
+            "; ",
+            result.Failures
+                .Select(static failure => failure.Message)
+                .Where(static message => !string.IsNullOrWhiteSpace(message)));
+        return string.IsNullOrWhiteSpace(details)
+            ? summary
+            : $"{summary} {details}";
     }
 
     private static string SafeCommand(string? value) =>

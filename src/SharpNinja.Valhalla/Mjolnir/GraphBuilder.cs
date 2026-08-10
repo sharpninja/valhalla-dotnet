@@ -27,6 +27,7 @@
 // simple turn restrictions, access restrictions) is preserved exactly.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -581,19 +582,49 @@ public sealed class GraphBuilder
         IReadOnlyList<OSMWay> ways,
         IReadOnlyList<OSMWayNode> wayNodes,
         Graph graph,
-        uint tileCreationDate = 0)
+        uint tileCreationDate = 0) =>
+        Build(
+            osmdata,
+            ways,
+            wayNodes,
+            graph,
+            tileCreationDate,
+            maxDegreeOfParallelism: 1,
+            CancellationToken.None);
+
+    /// <summary>
+    /// Builds local graph tiles with bounded parallel tile construction after global indexes freeze.
+    /// </summary>
+    public static Dictionary<GraphId, byte[]> Build(
+        OSMData osmdata,
+        IReadOnlyList<OSMWay> ways,
+        IReadOnlyList<OSMWayNode> wayNodes,
+        Graph graph,
+        uint tileCreationDate,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(osmdata);
         ArgumentNullException.ThrowIfNull(graph);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        cancellationToken.ThrowIfCancellationRequested();
 
         Dictionary<ulong, uint> ferrySpeeds = ComputeFerrySpeeds(ways, wayNodes);
         List<Node> nodes = graph.Nodes;
         List<Edge> edges = graph.Edges;
 
         Tiles<PointLL, double> tiling = TileHierarchy.Levels()[^1].Tiles;
-        var result = new Dictionary<GraphId, byte[]>();
+        var parallelResult = new ConcurrentDictionary<GraphId, byte[]>();
+        var parallelOptions = new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = maxDegreeOfParallelism,
+        };
 
-        foreach (KeyValuePair<GraphId, int> tile in graph.Tiles)
+        Parallel.ForEach(
+            graph.Tiles,
+            parallelOptions,
+            tile =>
         {
             GraphId tileId = tile.Key.TileBase();
             var graphtile = new GraphTileBuilder(tileId);
@@ -616,6 +647,10 @@ public sealed class GraphBuilder
             int nodeItr = tile.Value;
             while (nodeItr < nodes.Count && nodes[nodeItr].GraphId.TileBase() == tileId)
             {
+                if ((nodeItr & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 NodeBundle bundle = NodeExpander.CollectNodeEdges(nodeItr, nodes, edges);
 
                 if (bundle.NodeEdges.Count == 0)
@@ -1104,7 +1139,14 @@ public sealed class GraphBuilder
                 nodeItr += bundle.NodeCount;
             }
 
-            result[tileId] = graphtile.StoreTileData();
+            parallelResult[tileId] = graphtile.StoreTileData();
+        });
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = new Dictionary<GraphId, byte[]>(graph.Tiles.Count);
+        foreach (GraphId tileId in graph.Tiles.Keys)
+        {
+            result.Add(tileId.TileBase(), parallelResult[tileId.TileBase()]);
         }
 
         GraphTileChecksum.StampTilesetBuildId(result.Values.ToArray());

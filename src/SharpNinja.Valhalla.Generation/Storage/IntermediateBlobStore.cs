@@ -54,6 +54,8 @@ public interface IIntermediateBlobStore : IDisposable
 
     byte[] Read(IntermediateBlobReference reference);
 
+    void Read(IntermediateBlobReference reference, Span<byte> destination);
+
     ValueTask<IntermediateBlobManifest> CompleteAsync(
         CancellationToken cancellationToken = default);
 }
@@ -190,23 +192,44 @@ public sealed class IntermediateBlobStore : IIntermediateBlobStore
         }
 
         var result = GC.AllocateUninitializedArray<byte>(reference.Length);
+        Read(reference, result);
+        return result;
+    }
+
+    public void Read(
+        IntermediateBlobReference reference,
+        Span<byte> destination)
+    {
+        ThrowIfDisposed();
+        ValidateReference(reference);
+        if (destination.Length != reference.Length)
+        {
+            throw new ArgumentException(
+                "Destination length must match the blob reference length.",
+                nameof(destination));
+        }
+
+        if (destination.IsEmpty)
+        {
+            return;
+        }
+
         if (activeStorageMode == IntermediateStorageMode.Memory)
         {
             memory.AsSpan(
                     checked((int)reference.Offset),
                     reference.Length)
-                .CopyTo(result);
-            return result;
+                .CopyTo(destination);
+            return;
         }
 
         if (!complete)
         {
-            ReadDirect(reference.Offset, result);
-            return result;
+            ReadDirect(reference.Offset, destination);
+            return;
         }
 
-        ReadThroughCache(reference.Offset, result);
-        return result;
+        ReadThroughCache(reference.Offset, destination);
     }
 
     public async ValueTask<IntermediateBlobManifest> CompleteAsync(
