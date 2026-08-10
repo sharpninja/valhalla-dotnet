@@ -88,11 +88,13 @@ public static class HierarchyBuilder
         // Association of old nodes to new nodes (both directions).
         CreateNodeAssociations(reader, newToOld, oldToNew);
 
-        // Sort the sequences.
+        // Sort the sequences and index dense old-node ids by their base tile.
         SortSequences(newToOld, oldToNew);
+        Dictionary<GraphId, int> oldToNewTileOffsets =
+            CreateAssociationTileOffsets(oldToNew);
 
         // Iterate through the hierarchy (from highway down to local) and build new tiles.
-        FormTilesInNewLevel(reader, newToOld, oldToNew);
+        FormTilesInNewLevel(reader, newToOld, oldToNew, oldToNewTileOffsets);
 
         // Remove any base tiles that no longer have any data (nodes and edges only exist on arterial
         // and highway levels).
@@ -156,37 +158,65 @@ public static class HierarchyBuilder
             return a.New.Level().CompareTo(b.New.Level());
         });
 
-        // Sort old to new by node Id.
-        oldToNew.Sort((a, b) => a.NodeId.CompareTo(b.NodeId));
+        // Group dense base-node ids by tile so association lookup is a direct offset operation.
+        oldToNew.Sort(static (left, right) =>
+        {
+            int tileComparison = left.NodeId.Tileid().CompareTo(right.NodeId.Tileid());
+            return tileComparison != 0
+                ? tileComparison
+                : left.NodeId.Id().CompareTo(right.NodeId.Id());
+        });
     }
 
-    // Convenience method to find the node association (binary search on the sorted old->new list).
-    // Faithful port of find_nodes.
-    private static OldToNewNodes FindNodes(List<OldToNewNodes> oldToNew, GraphId node)
+    private static Dictionary<GraphId, int> CreateAssociationTileOffsets(
+        List<OldToNewNodes> oldToNew)
     {
-        // std::lower_bound on NodeId, then verify the match (the C++ sequence::find returns the first
-        // element not-less-than the target and throws if no exact node match).
-        int low = 0;
-        int high = oldToNew.Count;
-        while (low < high)
+        var offsets = new Dictionary<GraphId, int>();
+        GraphId previousTile = default;
+        var tileStart = 0;
+        for (var index = 0; index < oldToNew.Count; index++)
         {
-            int mid = low + ((high - low) >> 1);
-            if (oldToNew[mid].NodeId < node)
+            GraphId node = oldToNew[index].NodeId;
+            GraphId tile = node.TileBase();
+            if (index == 0 || tile != previousTile)
             {
-                low = mid + 1;
+                if (node.Id() != 0)
+                {
+                    throw new InvalidOperationException("Node association tile does not start at node zero.");
+                }
+
+                offsets.Add(tile, index);
+                previousTile = tile;
+                tileStart = index;
             }
-            else
+            else if (node.Id() != checked((uint)(index - tileStart)))
             {
-                high = mid;
+                throw new InvalidOperationException("Node associations are not dense within their tile.");
             }
         }
 
-        if (low >= oldToNew.Count || oldToNew[low].NodeId != node)
+        return offsets;
+    }
+
+    // Node ids are dense within each base tile. Resolve them through a tile-sized offset index rather
+    // than repeating a whole-sequence binary search for every node, directed edge, and transition.
+    private static OldToNewNodes FindNodes(
+        List<OldToNewNodes> oldToNew,
+        IReadOnlyDictionary<GraphId, int> tileOffsets,
+        GraphId node)
+    {
+        if (!tileOffsets.TryGetValue(node.TileBase(), out int tileStart))
+        {
+            throw new InvalidOperationException("Didn't find node tile!");
+        }
+
+        int index = checked(tileStart + (int)node.Id());
+        if ((uint)index >= (uint)oldToNew.Count || oldToNew[index].NodeId != node)
         {
             throw new InvalidOperationException("Didn't find node!");
         }
 
-        return oldToNew[low];
+        return oldToNew[index];
     }
 
     // Create node associations between "new" nodes placed into respective hierarchy levels and the
@@ -308,7 +338,8 @@ public static class HierarchyBuilder
     private static void FormTilesInNewLevel(
         GraphReader reader,
         List<(GraphId New, GraphId Old)> newToOld,
-        List<OldToNewNodes> oldToNew)
+        List<OldToNewNodes> oldToNew,
+        IReadOnlyDictionary<GraphId, int> oldToNewTileOffsets)
     {
         // lambda to indicate whether a directed edge should be included on the current level.
         bool IncludeEdge(DirectedEdge directededge, GraphId baseNode, byte currentLevel)
@@ -319,7 +350,7 @@ public static class HierarchyBuilder
             {
                 // Transit connection edges should live on the lowest class level where a new node
                 // exists.
-                OldToNewNodes f = FindNodes(oldToNew, baseNode);
+                OldToNewNodes f = FindNodes(oldToNew, oldToNewTileOffsets, baseNode);
                 byte lowestLevel;
                 if (f.LocalNode.IsValid())
                 {
@@ -438,7 +469,7 @@ public static class HierarchyBuilder
                 }
                 else
                 {
-                    OldToNewNodes newNodes = FindNodes(oldToNew, directededge.EndNode);
+                    OldToNewNodes newNodes = FindNodes(oldToNew, oldToNewTileOffsets, directededge.EndNode);
                     if (currentLevel == 0)
                     {
                         nodeb = newNodes.HighwayNode;
@@ -526,7 +557,7 @@ public static class HierarchyBuilder
 
             // Add node transitions.
             uint index = (uint)tilebuilder.Transitions.Count;
-            OldToNewNodes assoc = FindNodes(oldToNew, baseNode);
+            OldToNewNodes assoc = FindNodes(oldToNew, oldToNewTileOffsets, baseNode);
             if (currentLevel == 0)
             {
                 AddDownwardTransition(assoc.ArterialNode, tilebuilder);
