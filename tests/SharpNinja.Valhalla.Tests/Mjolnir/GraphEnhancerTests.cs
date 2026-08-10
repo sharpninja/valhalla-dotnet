@@ -55,6 +55,26 @@ public class GraphEnhancerTests
     }
 
     [Fact]
+    public void Enhance_ReportsSecondPassOperationCounts()
+    {
+        Dictionary<GraphId, byte[]> tiles = BuildTiles(out _);
+
+        var enhancer = new GraphEnhancer();
+        _ = enhancer.Enhance(tiles);
+
+        GraphEnhancer.EnhancerStats stats = enhancer.Stats;
+        Assert.True(stats.SecondPassEdgeCount > 0);
+        Assert.True(stats.NameConsistencyCheckCount >= stats.SecondPassEdgeCount);
+        Assert.Equal(stats.SecondPassEdgeCount, stats.InternalIntersectionCheckCount);
+        Assert.Equal(stats.SecondPassEdgeCount, stats.StopYieldCheckCount);
+        Assert.True(stats.TurnLaneCheckCount <= stats.SecondPassEdgeCount);
+        Assert.True(stats.NotThruCheckCount > 1);
+        Assert.True(stats.NotThruCheckCount <= stats.SecondPassEdgeCount);
+        Assert.True(stats.NotThruNodeExpansionCount >= stats.NotThruCheckCount);
+        Assert.Equal(1UL, stats.NotThruScratchAllocationCount);
+    }
+
+    [Fact]
     public void Enhance_ProducesByteCompatibleTile_RoundTripsThroughReader()
     {
         Dictionary<GraphId, byte[]> tiles = BuildTiles(out _);

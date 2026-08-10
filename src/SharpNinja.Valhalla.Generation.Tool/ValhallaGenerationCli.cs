@@ -527,6 +527,26 @@ public static partial class ValhallaGenerationCli
                         static pair => pair.Key,
                         static pair => pair.Value.TotalMilliseconds,
                         StringComparer.Ordinal),
+                ["enhancerOperationCounts"] = new Dictionary<string, ulong>(
+                    StringComparer.Ordinal)
+                {
+                    ["secondPassEdges"] =
+                        result.EnhancerStats?.SecondPassEdgeCount ?? 0,
+                    ["nameConsistencyChecks"] =
+                        result.EnhancerStats?.NameConsistencyCheckCount ?? 0,
+                    ["internalIntersectionChecks"] =
+                        result.EnhancerStats?.InternalIntersectionCheckCount ?? 0,
+                    ["stopYieldChecks"] =
+                        result.EnhancerStats?.StopYieldCheckCount ?? 0,
+                    ["turnLaneChecks"] =
+                        result.EnhancerStats?.TurnLaneCheckCount ?? 0,
+                    ["notThruChecks"] =
+                        result.EnhancerStats?.NotThruCheckCount ?? 0,
+                    ["notThruNodeExpansions"] =
+                        result.EnhancerStats?.NotThruNodeExpansionCount ?? 0,
+                    ["notThruScratchAllocations"] =
+                        result.EnhancerStats?.NotThruScratchAllocationCount ?? 0,
+                },
                 ["validationReceiptSha256"] = validation.ReceiptSha256,
             };
         }

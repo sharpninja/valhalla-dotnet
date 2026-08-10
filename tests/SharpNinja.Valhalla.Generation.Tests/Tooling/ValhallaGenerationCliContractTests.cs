@@ -281,6 +281,26 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
         Assert.True(tileStages.GetProperty("validate.tile.binning").GetDouble() > 0);
         Assert.True(tileStages.GetProperty("validate.tile.update").GetDouble() > 0);
         Assert.True(tileStages.GetProperty("validate.tile.add-bins").GetDouble() >= 0);
+        JsonElement enhancerOperations = data.GetProperty("enhancerOperationCounts");
+        Assert.True(enhancerOperations.GetProperty("secondPassEdges").GetUInt64() > 0);
+        Assert.True(
+            enhancerOperations.GetProperty("nameConsistencyChecks").GetUInt64() >=
+            enhancerOperations.GetProperty("secondPassEdges").GetUInt64());
+        Assert.Equal(
+            enhancerOperations.GetProperty("secondPassEdges").GetUInt64(),
+            enhancerOperations.GetProperty("internalIntersectionChecks").GetUInt64());
+        Assert.Equal(
+            enhancerOperations.GetProperty("secondPassEdges").GetUInt64(),
+            enhancerOperations.GetProperty("stopYieldChecks").GetUInt64());
+        Assert.True(
+            enhancerOperations.GetProperty("notThruNodeExpansions").GetUInt64() >=
+            enhancerOperations.GetProperty("notThruChecks").GetUInt64());
+        ulong notThruScratchAllocations =
+            enhancerOperations.GetProperty("notThruScratchAllocations").GetUInt64();
+        Assert.InRange(
+            notThruScratchAllocations,
+            1UL,
+            enhancerOperations.GetProperty("notThruChecks").GetUInt64());
         Assert.NotEmpty(
             Directory.GetFiles(
                 outputDirectory,

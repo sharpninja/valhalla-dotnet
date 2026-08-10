@@ -89,6 +89,30 @@ public sealed class GraphEnhancer
         /// <summary>Number of edges marked not-thru.</summary>
         public uint NotThru { get; set; }
 
+        /// <summary>Number of directed edges processed by the second enhancement pass.</summary>
+        public ulong SecondPassEdgeCount { get; set; }
+
+        /// <summary>Number of pairwise street-name consistency checks.</summary>
+        public ulong NameConsistencyCheckCount { get; set; }
+
+        /// <summary>Number of internal-intersection inference checks.</summary>
+        public ulong InternalIntersectionCheckCount { get; set; }
+
+        /// <summary>Number of stop/yield-sign propagation checks.</summary>
+        public ulong StopYieldCheckCount { get; set; }
+
+        /// <summary>Number of turn-lane enhancement operations.</summary>
+        public ulong TurnLaneCheckCount { get; set; }
+
+        /// <summary>Number of not-thru graph searches.</summary>
+        public ulong NotThruCheckCount { get; set; }
+
+        /// <summary>Number of nodes expanded across all not-thru graph searches.</summary>
+        public ulong NotThruNodeExpansionCount { get; set; }
+
+        /// <summary>Number of reusable not-thru scratch buffers allocated.</summary>
+        public ulong NotThruScratchAllocationCount { get; set; }
+
         /// <summary>Number of nodes with no admin/country found.</summary>
         public uint NoCountryFound { get; set; }
 
@@ -118,6 +142,16 @@ public sealed class GraphEnhancer
     }
 
     private readonly EnhancerStats _stats = new();
+    private NotThruSearchScratch? _notThruSearchScratch;
+
+    private sealed class NotThruSearchScratch
+    {
+        public HashSet<ulong> Visited { get; } =
+            new(checked((int)MaxNoThruTries));
+
+        public List<GraphId> Expansion { get; } =
+            new(checked((int)MaxNoThruTries));
+    }
 
     /// <summary>The statistics collected during the last <see cref="Enhance(IDictionary{GraphId, byte[]})"/> call.</summary>
     public EnhancerStats Stats => _stats;
@@ -242,6 +276,14 @@ public sealed class GraphEnhancer
         {
             _stats.MaxDensity = Math.Max(_stats.MaxDensity, statistics.MaxDensity);
             _stats.NotThru += statistics.NotThru;
+            _stats.SecondPassEdgeCount += statistics.SecondPassEdgeCount;
+            _stats.NameConsistencyCheckCount += statistics.NameConsistencyCheckCount;
+            _stats.InternalIntersectionCheckCount += statistics.InternalIntersectionCheckCount;
+            _stats.StopYieldCheckCount += statistics.StopYieldCheckCount;
+            _stats.TurnLaneCheckCount += statistics.TurnLaneCheckCount;
+            _stats.NotThruCheckCount += statistics.NotThruCheckCount;
+            _stats.NotThruNodeExpansionCount += statistics.NotThruNodeExpansionCount;
+            _stats.NotThruScratchAllocationCount += statistics.NotThruScratchAllocationCount;
             _stats.NoCountryFound += statistics.NoCountryFound;
             _stats.InternalCount += statistics.InternalCount;
             _stats.TurnChannelCount += statistics.TurnChannelCount;
@@ -487,6 +529,7 @@ public sealed class GraphEnhancer
             for (uint j = 0; j < edgeCount; j++)
             {
                 ref DirectedEdge directededge = ref tile.DirectedEdgeRef((int)(edgeIndex + j));
+                _stats.SecondPassEdgeCount++;
 
                 // PORT-NOTE: country-override branch excluded (no admin db); end-node admin is the
                 // "None" admin with empty iso codes (matching GraphBuilder's admin_index == 0).
@@ -534,6 +577,7 @@ public sealed class GraphEnhancer
                     : StreetNamesFactory.Create(countryCode, names);
                 for (uint k = 0; k < ntrans; k++)
                 {
+                    _stats.NameConsistencyCheckCount++;
                     if (ConsistentNames(streetNames, transitionStreetNames[(int)k]))
                     {
                         directededge.SetNameConsistency(k, true);
@@ -547,10 +591,13 @@ public sealed class GraphEnhancer
                 }
 
                 // Test if an internal intersection edge (must be after setting opposing edge index).
-                if (inferInternalIntersections &&
-                    IsIntersectionInternal(tile, reader, nodeinfo, directededge, j))
+                if (inferInternalIntersections)
                 {
-                    directededge.SetInternal(true);
+                    _stats.InternalIntersectionCheckCount++;
+                    if (IsIntersectionInternal(tile, reader, nodeinfo, directededge, j))
+                    {
+                        directededge.SetInternal(true);
+                    }
                 }
 
                 if (directededge.Internal)
@@ -558,17 +605,20 @@ public sealed class GraphEnhancer
                     _stats.InternalCount++;
                 }
 
+                _stats.StopYieldCheckCount++;
                 SetStopYieldSignInfo(tile, reader, nodeinfo, ref directededge);
 
                 // Enhance and add turn lanes.
                 if (directededge.TurnLanes)
                 {
+                    _stats.TurnLaneCheckCount++;
                     UpdateTurnLanes(tile, edgeIndex + j, ref directededge, reader, turnLanes);
                 }
 
                 // Check for not_thru edge (only on low importance edges).
                 if (directededge.Classification > RoadClass.Tertiary)
                 {
+                    _stats.NotThruCheckCount++;
                     if (IsNotThruEdge(reader, tile, startnode, directededge))
                     {
                         directededge.SetNotThru(true);
@@ -1214,11 +1264,23 @@ public sealed class GraphEnhancer
     // IsNotThruEdge
     // ------------------------------------------------------------------
 
-    private static bool IsNotThruEdge(
-        ITileSource reader, TileModel startTile, GraphId startnode, DirectedEdge directededge)
+    private bool IsNotThruEdge(
+        ITileSource reader,
+        TileModel startTile,
+        GraphId startnode,
+        DirectedEdge directededge)
     {
-        var visitedset = new HashSet<ulong>();
-        var expandset = new List<GraphId>();
+        if (_notThruSearchScratch is null)
+        {
+            _notThruSearchScratch = new NotThruSearchScratch();
+            _stats.NotThruScratchAllocationCount++;
+        }
+
+        HashSet<ulong> visitedset = _notThruSearchScratch.Visited;
+        List<GraphId> expandset = _notThruSearchScratch.Expansion;
+        visitedset.Clear();
+        expandset.Clear();
+
         int expandPos = 0;
         expandset.Add(directededge.EndNode);
 
@@ -1232,6 +1294,7 @@ public sealed class GraphEnhancer
             }
 
             GraphId expandnode = expandset[expandPos++];
+            _stats.NotThruNodeExpansionCount++;
             visitedset.Add(expandnode.Value);
             if (tile is null || tile.Id != expandnode.TileBase())
             {
