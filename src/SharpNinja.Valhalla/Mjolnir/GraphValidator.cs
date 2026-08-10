@@ -38,6 +38,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
@@ -65,8 +66,32 @@ public static class GraphValidator
     /// </summary>
     public sealed class ValidatorStats
     {
+        private readonly Dictionary<string, TimeSpan> stageDurations =
+            new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TimeSpan> tileStageDurations =
+            new(StringComparer.Ordinal)
+            {
+                ["deserialize"] = TimeSpan.Zero,
+                ["edges"] = TimeSpan.Zero,
+                ["binning"] = TimeSpan.Zero,
+                ["update"] = TimeSpan.Zero,
+                ["add-bins"] = TimeSpan.Zero,
+            };
+
         /// <summary>Number of tiles validated (all levels).</summary>
         public int TileCount { get; set; }
+
+        /// <summary>Elapsed wall time for each validation sub-stage.</summary>
+        public IReadOnlyDictionary<string, TimeSpan> StageDurations => stageDurations;
+
+        /// <summary>Aggregate elapsed wall time for the measured per-tile validation stages.</summary>
+        public IReadOnlyDictionary<string, TimeSpan> TileStageDurations => tileStageDurations;
+
+        internal void RecordStageDuration(string stage, TimeSpan duration) =>
+            stageDurations[stage] = duration;
+
+        internal void AddTileStageDuration(string stage, TimeSpan duration) =>
+            tileStageDurations[stage] += duration;
 
         /// <summary>Possible duplicate-edge counts per hierarchy level (index = level).</summary>
         public uint[] Duplicates { get; } = new uint[TileHierarchy.GetTransitLevel().Level + 1];
@@ -133,6 +158,7 @@ public static class GraphValidator
         cancellationToken.ThrowIfCancellationRequested();
 
         var stats = new ValidatorStats();
+        var stopwatch = Stopwatch.StartNew();
         byte transitLevel = TileHierarchy.GetTransitLevel().Level;
 
         // Vector to hold problem ways (TODO in C++ - "could be a useful list").
@@ -184,6 +210,10 @@ public static class GraphValidator
             }
         }
 
+        stopwatch.Stop();
+        stats.RecordStageDuration("tiles", stopwatch.Elapsed);
+        stopwatch.Restart();
+
         // Run a pass to add the edges that binned to tweener tiles (faithful port of bin_tweeners).
         // The reader cache is dropped first so AddBins observes the just-rewritten local tiles.
         reader.Trim();
@@ -217,7 +247,13 @@ public static class GraphValidator
             EdgeBinner.AddBins(tileDir, tile, tw.Value);
         }
 
+        stopwatch.Stop();
+        stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
+        stopwatch.Restart();
+
         GraphTileChecksum.RefreshTilesetFiles(tileDir, cancellationToken);
+        stopwatch.Stop();
+        stats.RecordStageDuration("checksums", stopwatch.Elapsed);
         return stats;
     }
 
@@ -248,8 +284,11 @@ public static class GraphValidator
         }
 
         // Get the tile builder (deserialize so it can be modified + re-stored).
+        long tileStageStart = Stopwatch.GetTimestamp();
         var tilebuilder = new GraphTileBuilder(tile);
+        stats.AddTileStageDuration("deserialize", Stopwatch.GetElapsedTime(tileStageStart));
 
+        tileStageStart = Stopwatch.GetTimestamp();
         // Update nodes and directed edges as needed.
         var nodes = new List<NodeInfo>();
         var directededges = new List<DirectedEdge>();
@@ -435,15 +474,21 @@ public static class GraphValidator
         }
 
         tilebuilder.HeaderBuilder.SetDensity(relativeDensity);
+        stats.AddTileStageDuration("edges", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Bin the edges (compute this tile's own bins + accumulate cross-tile tweeners) BEFORE the
         // tile is rewritten, while the original shapes/edges are still readable. Faithful port of
         // GraphTileBuilder::BinEdges in graphvalidator.cc.
+        tileStageStart = Stopwatch.GetTimestamp();
         List<EdgeBinner.BinEntry>[] bins = EdgeBinner.BinEdges(tile, tweeners);
+        stats.AddTileStageDuration("binning", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Write the new tile.
+        tileStageStart = Stopwatch.GetTimestamp();
         tilebuilder.Update(tileDir, nodes, directededges);
+        stats.AddTileStageDuration("update", Stopwatch.GetElapsedTime(tileStageStart));
 
+        tileStageStart = Stopwatch.GetTimestamp();
         // Write this tile's own bins to it (only the local / highest level carries bins). Reload the
         // just-written tile and append the bins, sorting each bin for deterministic output. Faithful
         // port of the "Write the bins to it" block in graphvalidator.cc.
@@ -456,6 +501,8 @@ public static class GraphValidator
                 EdgeBinner.AddBins(tileDir, reloaded, bins);
             }
         }
+
+        stats.AddTileStageDuration("add-bins", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Add possible duplicates to return class.
         stats.Duplicates[level] += dupcount;

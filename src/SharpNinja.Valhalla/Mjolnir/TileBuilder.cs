@@ -415,6 +415,18 @@ public static class TileBuilder
             cancellationToken);
         stageStopwatch.Stop();
         result.RecordStageDuration("validate", stageStopwatch.Elapsed);
+        foreach ((string validationStage, TimeSpan duration) in
+                 result.ValidatorStats.StageDurations)
+        {
+            result.RecordStageDuration($"validate.{validationStage}", duration);
+        }
+
+        foreach ((string tileStage, TimeSpan duration) in
+                 result.ValidatorStats.TileStageDurations)
+        {
+            result.RecordStageDuration($"validate.tile.{tileStage}", duration);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
 
         result.Success = true;

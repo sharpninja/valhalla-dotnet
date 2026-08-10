@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace SharpNinja.Valhalla.Midgard;
 
 internal static class MinimumBoundingCircle
@@ -25,18 +27,43 @@ internal static class MinimumBoundingCircle
             maxLatitude = Math.Max(maxLatitude, point.Lat);
         }
 
-        var minimum = new PointLL(minLongitude, minLatitude);
-        var maximum = new PointLL(maxLongitude, maxLatitude);
-        if (minimum.Distance(maximum) > distanceThresholdMeters)
+        if (DistanceMeters(
+                minLongitude,
+                minLatitude,
+                maxLongitude,
+                maxLatitude) > distanceThresholdMeters)
         {
             return null;
         }
 
         var projection = new AzimuthalEquidistantProjection(
-            new PointLL(
-                (minLongitude + maxLongitude) * 0.5,
-                (minLatitude + maxLatitude) * 0.5));
-        var projected = new PlanePoint[points.Count];
+            (minLongitude + maxLongitude) * 0.5,
+            (minLatitude + maxLatitude) * 0.5);
+        if (points.Count <= 128)
+        {
+            Span<PlanePoint> projected = stackalloc PlanePoint[points.Count];
+            return ProjectAndCompute(points, projection, projected);
+        }
+
+        PlanePoint[] rented = ArrayPool<PlanePoint>.Shared.Rent(points.Count);
+        try
+        {
+            return ProjectAndCompute(
+                points,
+                projection,
+                rented.AsSpan(0, points.Count));
+        }
+        finally
+        {
+            ArrayPool<PlanePoint>.Shared.Return(rented);
+        }
+    }
+
+    private static (PointLL Center, double RadiusMeters) ProjectAndCompute(
+        IReadOnlyList<PointLL> points,
+        AzimuthalEquidistantProjection projection,
+        Span<PlanePoint> projected)
+    {
         for (int index = 0; index < points.Count; index++)
         {
             projected[index] = projection.Project(points[index]);
@@ -46,10 +73,10 @@ internal static class MinimumBoundingCircle
         return (projection.ProjectInverse(circle.Center), circle.Radius);
     }
 
-    private static PlaneCircle ComputeProjected(IReadOnlyList<PlanePoint> points)
+    private static PlaneCircle ComputeProjected(ReadOnlySpan<PlanePoint> points)
     {
         PlaneCircle circle = PlaneCircle.Invalid;
-        for (int first = 0; first < points.Count; first++)
+        for (int first = 0; first < points.Length; first++)
         {
             PlanePoint firstPoint = points[first];
             if (circle.Contains(firstPoint))
@@ -97,22 +124,24 @@ internal static class MinimumBoundingCircle
         PlanePoint third)
     {
         PlaneCircle best = PlaneCircle.Invalid;
-        PlaneCircle[] diameterCandidates =
-        [
+        best = SelectSmallerContainingCircle(
+            best,
             Diameter(first, second),
+            first,
+            second,
+            third);
+        best = SelectSmallerContainingCircle(
+            best,
             Diameter(first, third),
+            first,
+            second,
+            third);
+        best = SelectSmallerContainingCircle(
+            best,
             Diameter(second, third),
-        ];
-        foreach (PlaneCircle candidate in diameterCandidates)
-        {
-            if (candidate.Contains(first) &&
-                candidate.Contains(second) &&
-                candidate.Contains(third) &&
-                (!best.IsValid || candidate.Radius < best.Radius))
-            {
-                best = candidate;
-            }
-        }
+            first,
+            second,
+            third);
 
         double determinant =
             (2 * first.X * (second.Y - third.Y)) +
@@ -141,6 +170,48 @@ internal static class MinimumBoundingCircle
         return !best.IsValid || circumcircle.Radius < best.Radius
             ? circumcircle
             : best;
+    }
+
+    private static PlaneCircle SelectSmallerContainingCircle(
+        PlaneCircle best,
+        PlaneCircle candidate,
+        PlanePoint first,
+        PlanePoint second,
+        PlanePoint third) =>
+        candidate.Contains(first) &&
+        candidate.Contains(second) &&
+        candidate.Contains(third) &&
+        (!best.IsValid || candidate.Radius < best.Radius)
+            ? candidate
+            : best;
+
+    private static double DistanceMeters(
+        double firstLongitude,
+        double firstLatitude,
+        double secondLongitude,
+        double secondLatitude)
+    {
+        if (firstLongitude == secondLongitude && firstLatitude == secondLatitude)
+        {
+            return 0.0;
+        }
+
+        double firstLatitudeRadians = firstLatitude * Constants.RadPerDegD;
+        double secondLatitudeRadians = secondLatitude * Constants.RadPerDegD;
+        double latitudeDelta = secondLatitudeRadians - firstLatitudeRadians;
+        double firstLongitudeRadians = firstLongitude * Constants.RadPerDegD;
+        double secondLongitudeRadians = secondLongitude * Constants.RadPerDegD;
+        double longitudeDelta = secondLongitudeRadians - firstLongitudeRadians;
+        double firstCosine = Math.Cos(firstLatitudeRadians);
+        double secondCosine = Math.Cos(secondLatitudeRadians);
+        double halfLatitudeSine = Math.Sin(latitudeDelta / 2.0);
+        double halfLongitudeSine = Math.Sin(longitudeDelta / 2.0);
+        double haversine =
+            (halfLatitudeSine * halfLatitudeSine) +
+            (firstCosine * secondCosine * halfLongitudeSine * halfLongitudeSine);
+        haversine = Math.Min(1.0, Math.Max(0.0, haversine));
+        double distance = 2.0 * Math.Asin(Math.Sqrt(haversine));
+        return Constants.RadEarthMeters * distance;
     }
 
     private static double DistanceSquared(PlanePoint first, PlanePoint second)
@@ -179,10 +250,12 @@ internal static class MinimumBoundingCircle
         private readonly double _sinLatitude;
         private readonly double _cosLatitude;
 
-        internal AzimuthalEquidistantProjection(PointLL center)
+        internal AzimuthalEquidistantProjection(
+            double longitudeDegrees,
+            double latitudeDegrees)
         {
-            _longitudeRadians = center.Lng * Constants.RadPerDegD;
-            _latitudeRadians = center.Lat * Constants.RadPerDegD;
+            _longitudeRadians = longitudeDegrees * Constants.RadPerDegD;
+            _latitudeRadians = latitudeDegrees * Constants.RadPerDegD;
             _sinLatitude = Math.Sin(_latitudeRadians);
             _cosLatitude = Math.Cos(_latitudeRadians);
         }

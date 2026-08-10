@@ -273,6 +273,14 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
         Assert.True(tileStages.GetProperty("shortcuts").GetDouble() > 0);
         Assert.True(tileStages.GetProperty("restrictions").GetDouble() > 0);
         Assert.True(tileStages.GetProperty("validate").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tiles").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tweeners").GetDouble() >= 0);
+        Assert.True(tileStages.GetProperty("validate.checksums").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tile.deserialize").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tile.edges").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tile.binning").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tile.update").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate.tile.add-bins").GetDouble() >= 0);
         Assert.NotEmpty(
             Directory.GetFiles(
                 outputDirectory,

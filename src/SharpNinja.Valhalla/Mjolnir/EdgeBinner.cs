@@ -15,6 +15,8 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
@@ -91,6 +93,7 @@ internal static class EdgeBinner
 
         // avoid duplicates of edges that start and end in the same tile (dedup on edgeinfo offset).
         var ids = new HashSet<uint>();
+        var intersection = new Dictionary<int, uint>();
         uint edgeCount = tile.Header().Directededgecount();
         for (uint e = 0; e < edgeCount; e++)
         {
@@ -129,9 +132,9 @@ internal static class EdgeBinner
                 MinimumBoundingCircle.Compute(
                     shape,
                     DiscretizedBoundingCircle.MaxCircleBoundingBoxMeters);
-            Dictionary<int, HashSet<ushort>> intersection = Intersect(tiles, shape);
+            IntersectBitMasks(tiles, shape, intersection);
             var edgeId = new GraphId(tileGraphId.Tileid(), tileGraphId.Level(), e);
-            foreach (KeyValuePair<int, HashSet<ushort>> i in intersection)
+            foreach (KeyValuePair<int, uint> i in intersection)
             {
                 bool originating = i.Key == startId;
                 bool terminating = i.Key == endId;
@@ -158,8 +161,11 @@ internal static class EdgeBinner
 
                     Aabb2T<double> tileBounds = tiles.TileBounds(i.Key);
                     double subdivisionSize = tiles.SubdivisionSize();
-                    foreach (ushort bin in i.Value)
+                    uint binMask = i.Value;
+                    while (binMask != 0)
                     {
+                        var bin = (ushort)BitOperations.TrailingZeroCount(binMask);
+                        binMask &= binMask - 1;
                         double latitudeOffset =
                             ((bin / BinsDim) * subdivisionSize) +
                             (subdivisionSize * 0.5);
@@ -484,6 +490,175 @@ internal static class EdgeBinner
         }
 
         return intersection;
+    }
+
+    /// <summary>
+    /// Writes the intersected subdivisions as 25-bit masks into a reusable dictionary. This is
+    /// semantically equivalent to <see cref="Intersect"/> while avoiding one dictionary and one
+    /// hash-set allocation per intersected tile for every directed edge.
+    /// </summary>
+    internal static void IntersectBitMasks(
+        Tiles<PointLL, double> tiles,
+        IReadOnlyList<PointLL> linestring,
+        Dictionary<int, uint> intersection)
+    {
+        ArgumentNullException.ThrowIfNull(tiles);
+        ArgumentNullException.ThrowIfNull(linestring);
+        ArgumentNullException.ThrowIfNull(intersection);
+        intersection.Clear();
+        if (linestring.Count == 0)
+        {
+            return;
+        }
+
+        Aabb2T<double> bounds = tiles.TileBounds();
+        int ncolumns = tiles.Ncolumns();
+        int nrows = tiles.Nrows();
+        int nsub = tiles.Nsubdivisions();
+        double subdivisionSize = tiles.SubdivisionSize();
+        double minx = bounds.Minx;
+        double miny = bounds.Miny;
+        double width = bounds.Width();
+        double height = bounds.Height();
+        int xMax = nsub * ncolumns;
+        int yMax = nsub * nrows;
+
+        IReadOnlyList<PointLL> line = linestring;
+        double maxMeters = Math.Max(
+            1.0,
+            subdivisionSize * 0.25 *
+            DistanceApproximator<PointLL, double>.MetersPerLngDegree(linestring[0].Lat));
+        if (PointLL.IsSpherical() && PointLlPolyline2.Length(linestring) > maxMeters)
+        {
+            line = ResampleSphericalPolyline(linestring, maxMeters, true);
+        }
+
+        for (int index = 0; index < line.Count; index++)
+        {
+            PointLL first = line[index];
+            PointLL second = first;
+            if (index + 1 < line.Count)
+            {
+                second = line[index + 1];
+            }
+            else if (line.Count > 1)
+            {
+                break;
+            }
+
+            double x0 = (first.Lng - minx) / width * ncolumns * nsub;
+            double y0 = (first.Lat - miny) / height * nrows * nsub;
+            double x1 = (second.Lng - minx) / width * ncolumns * nsub;
+            double y1 = (second.Lat - miny) / height * nrows * nsub;
+            int ix0 = (int)Math.Floor(x0);
+            int ix1 = (int)Math.Floor(x1);
+            int iy0 = (int)Math.Floor(y0);
+            int iy1 = (int)Math.Floor(y1);
+            int dx = ix0 - ix1;
+            int dy = iy0 - iy1;
+            int distanceSquared = (dx * dx) + (dy * dy);
+            if (distanceSquared == 0)
+            {
+                SetBitMaskPixel(ix0, iy0, xMax, yMax, nsub, ncolumns, intersection);
+            }
+            else if (distanceSquared == 1)
+            {
+                SetBitMaskPixel(ix0, iy0, xMax, yMax, nsub, ncolumns, intersection);
+                SetBitMaskPixel(ix1, iy1, xMax, yMax, nsub, ncolumns, intersection);
+            }
+            else
+            {
+                BresenhamLineBitMasks(
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    xMax,
+                    yMax,
+                    nsub,
+                    ncolumns,
+                    intersection);
+            }
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool SetBitMaskPixel(
+        int x,
+        int y,
+        int xMax,
+        int yMax,
+        int nsub,
+        int ncolumns,
+        Dictionary<int, uint> intersection)
+    {
+        if (x < 0 || y < 0 || x >= xMax || y >= yMax)
+        {
+            return true;
+        }
+
+        int tileColumn = x / nsub;
+        int tileRow = y / nsub;
+        int tile = (tileRow * ncolumns) + tileColumn;
+        int subdivision = ((y % nsub) * nsub) + (x % nsub);
+        intersection.TryGetValue(tile, out uint mask);
+        intersection[tile] = mask | (1u << subdivision);
+        return false;
+    }
+
+    private static void BresenhamLineBitMasks(
+        double x0,
+        double y0,
+        double x1,
+        double y1,
+        int xMax,
+        int yMax,
+        int nsub,
+        int ncolumns,
+        Dictionary<int, uint> intersection)
+    {
+        bool outside = SetBitMaskPixel(
+            (int)Math.Floor(x0),
+            (int)Math.Floor(y0),
+            xMax,
+            yMax,
+            nsub,
+            ncolumns,
+            intersection);
+        double sx = x0 < x1 ? 1 : -1;
+        double dx = x1 - x0;
+        double x = Math.Floor(x0) + 0.5;
+        double sy = y0 < y1 ? 1 : -1;
+        double dy = y1 - y0;
+        double y = Math.Floor(y0) + 0.5;
+        while (Math.Floor(x) != Math.Floor(x1) || Math.Floor(y) != Math.Floor(y1))
+        {
+            double tx = Math.Abs((dx * (y - y0)) - (dy * ((x + sx) - x0)));
+            double ty = Math.Abs((dx * ((y + sy) - y0)) - (dy * (x - x0)));
+            if (tx < ty || (tx == ty && y0 == y1))
+            {
+                x += sx;
+            }
+            else
+            {
+                y += sy;
+            }
+
+            bool currentOutside = SetBitMaskPixel(
+                (int)Math.Floor(x),
+                (int)Math.Floor(y),
+                xMax,
+                yMax,
+                nsub,
+                ncolumns,
+                intersection);
+            if (!outside && currentOutside)
+            {
+                return;
+            }
+
+            outside = currentOutside;
+        }
     }
 
     // Modified supercover Bresenham rasterizer. Faithful port of the anonymous-namespace

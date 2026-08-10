@@ -109,6 +109,74 @@ public sealed class GraphValidationParityTests
     }
 
     [Fact]
+    public void MinimumBoundingCircle_SmallShapeHotPathLimitsAllocationToReturnedCenters()
+    {
+        PointLL[] shape =
+        [
+            new PointLL(-86.6800, 36.1200),
+            new PointLL(-86.6750, 36.1250),
+            new PointLL(-86.6700, 36.1200),
+            new PointLL(-86.6750, 36.1150),
+        ];
+        (PointLL Center, double RadiusMeters)? expected =
+            MinimumBoundingCircle.Compute(shape, 5_000);
+        Assert.NotNull(expected);
+
+        _ = MinimumBoundingCircle.Compute(shape, 5_000);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        double checksum = 0;
+        for (int iteration = 0; iteration < 10_000; iteration++)
+        {
+            (PointLL Center, double RadiusMeters)? result =
+                MinimumBoundingCircle.Compute(shape, 5_000);
+            checksum += result!.Value.Center.Lng + result.Value.RadiusMeters;
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(checksum);
+        Assert.InRange(allocated, 0, 400_000);
+    }
+
+    [Fact]
+    public void ReusableBitmaskIntersection_MatchesReferenceAcrossShapeCorpus()
+    {
+        Tiles<PointLL, double> tiles = TileHierarchy.Levels()[^1].Tiles;
+        IReadOnlyList<PointLL>[] shapes =
+        [
+            [new PointLL(-86.6774, 36.1263)],
+            [new PointLL(-86.6774, 36.1263), new PointLL(-86.6710, 36.1310)],
+            [new PointLL(-86.9000, 36.0500), new PointLL(-86.5000, 36.2500)],
+            [
+                new PointLL(-87.0500, 35.9500),
+                new PointLL(-86.8500, 36.0500),
+                new PointLL(-86.6500, 36.2500),
+                new PointLL(-86.4500, 36.1500),
+            ],
+        ];
+        var reusable = new Dictionary<int, uint>();
+
+        foreach (IReadOnlyList<PointLL> shape in shapes)
+        {
+            Dictionary<int, HashSet<ushort>> reference = EdgeBinner.Intersect(tiles, shape);
+            reusable[int.MaxValue] = uint.MaxValue;
+
+            EdgeBinner.IntersectBitMasks(tiles, shape, reusable);
+
+            Assert.Equal(reference.Keys.Order(), reusable.Keys.Order());
+            foreach ((int tileId, HashSet<ushort> bins) in reference)
+            {
+                uint expectedMask = 0;
+                foreach (ushort bin in bins)
+                {
+                    expectedMask |= 1u << bin;
+                }
+
+                Assert.Equal(expectedMask, reusable[tileId]);
+            }
+        }
+    }
+
+    [Fact]
     public void ValidatedGraphStructure_MatchesOfficial()
     {
         string tileDirectory = Path.Combine(
@@ -135,6 +203,16 @@ public sealed class GraphValidationParityTests
                     new GraphReader.Config { TileDir = tileDirectory },
                     TestContext.Current.CancellationToken);
             Assert.NotEqual(0, stats.TileCount);
+            Assert.Equal(
+                new[] { "tiles", "tweeners", "checksums" },
+                stats.StageDurations.Keys);
+            Assert.All(stats.StageDurations.Values, duration => Assert.True(duration >= TimeSpan.Zero));
+            Assert.Equal(
+                new[] { "deserialize", "edges", "binning", "update", "add-bins" },
+                stats.TileStageDurations.Keys);
+            Assert.All(
+                stats.TileStageDurations.Values,
+                duration => Assert.True(duration >= TimeSpan.Zero));
 
             string[] tilePaths =
                 Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
