@@ -108,6 +108,7 @@ public sealed class PbfGraphParser
     private readonly List<OSMRestriction> _complexRestrictionsTo = new();
 
     private readonly CuldesacProcessor _culdesac = new();
+    private readonly Dictionary<ulong, int> _loopNodesScratch = new();
 
     // Per-way scratch (the C++ graph_parser members reset in way()).
     private OSMWay _way = new();
@@ -375,8 +376,10 @@ public sealed class PbfGraphParser
         {
         }
 
-        // Add the refs to the reference list and mark loop / flat-loop / intersection.
-        var loopNodes = new Dictionary<ulong, int>();
+        // Add the refs to the reference list and mark loop / flat-loop / intersection. Reuse the
+        // parser-owned table because way callbacks are synchronous and the entries never escape.
+        Dictionary<ulong, int> loopNodes = _loopNodesScratch;
+        loopNodes.Clear();
         int wayNodeIndex = _wayNodes.Count;
         for (int i = 0; i < nodeRefs.Count; ++i)
         {

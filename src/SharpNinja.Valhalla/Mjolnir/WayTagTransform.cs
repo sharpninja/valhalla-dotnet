@@ -44,14 +44,19 @@ public static class WayTagTransform
             return 1;
         }
 
-        var kv = new LuaKv(tags);
+        Dictionary<string, string>? mutableTags = tags as Dictionary<string, string>;
+        var kv = mutableTags is null ? new LuaKv(tags) : new LuaKv(mutableTags);
         int filter = FilterTagsGeneric(kv);
 
-        // Copy the normalized table back out.
-        tags.Clear();
-        foreach (KeyValuePair<string, string> p in kv.Raw)
+        // Arbitrary IDictionary implementations retain the defensive copy path. Dictionary-backed
+        // PBF tags are already the transform's mutable output and therefore need no round trip.
+        if (mutableTags is null)
         {
-            tags[p.Key] = p.Value;
+            tags.Clear();
+            foreach (KeyValuePair<string, string> p in kv.Raw)
+            {
+                tags[p.Key] = p.Value;
+            }
         }
 
         return filter;

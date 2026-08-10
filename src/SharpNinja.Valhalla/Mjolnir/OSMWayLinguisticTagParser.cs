@@ -60,11 +60,27 @@ internal static class OSMWayLinguisticTagParser
             }
         }
 
-        var languagesByType = new Dictionary<OSMLinguisticType, List<Language>>();
-        foreach (KeyValuePair<string, string> tag in tags.OrderBy(value => value.Key, StringComparer.Ordinal))
+        List<KeyValuePair<string, string>>? linguisticTags = null;
+        foreach (KeyValuePair<string, string> tag in tags)
         {
-            if (string.IsNullOrEmpty(tag.Value) ||
-                !TryMatchNameTag(tag.Key, out NameTag nameTag, out string suffix))
+            if (!string.IsNullOrEmpty(tag.Value) && HasNameTagSuffix(tag.Key))
+            {
+                linguisticTags ??= [];
+                linguisticTags.Add(tag);
+            }
+        }
+
+        if (linguisticTags is null)
+        {
+            return;
+        }
+
+        linguisticTags.Sort(static (left, right) =>
+            StringComparer.Ordinal.Compare(left.Key, right.Key));
+        var languagesByType = new Dictionary<OSMLinguisticType, List<Language>>();
+        foreach (KeyValuePair<string, string> tag in linguisticTags)
+        {
+            if (!TryMatchNameTag(tag.Key, out NameTag nameTag, out string suffix))
             {
                 continue;
             }
@@ -100,6 +116,26 @@ internal static class OSMWayLinguisticTagParser
                 entry.Value.Select(GraphConstants.ToStringValue));
             SetLanguageIndex(way, entry.Key, names.Index(languageList));
         }
+    }
+
+    private static bool HasNameTagSuffix(string key)
+    {
+        if (key.IndexOf(':') < 0)
+        {
+            return false;
+        }
+
+        foreach (NameTag candidate in NameTags)
+        {
+            if (key.Length > candidate.Key.Length &&
+                key.StartsWith(candidate.Key, StringComparison.Ordinal) &&
+                key[candidate.Key.Length] == ':')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryMatchNameTag(

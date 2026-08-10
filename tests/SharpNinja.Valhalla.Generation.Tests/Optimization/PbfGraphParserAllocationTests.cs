@@ -39,6 +39,32 @@ public sealed class PbfGraphParserAllocationTests
             $"copied={copiedAllocations}, transient={transientAllocations}.");
     }
 
+    [Fact]
+    public void NonLoopWayScratch_DoesNotAllocateDictionaryPerWay()
+    {
+        _ = MeasureReusableWayAllocations(100);
+
+        long allocated = MeasureReusableWayAllocations(10_000);
+
+        Assert.True(
+            allocated <= 42_000_000,
+            $"Expected reusable non-loop way processing to stay within its allocation budget; " +
+            $"allocated={allocated}.");
+    }
+
+    private static long MeasureReusableWayAllocations(int wayCount)
+    {
+        var parser = new PbfGraphParser();
+        var source = new ReusableTaggedWaySource(wayCount);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        OSMData data = parser.Parse(
+            source,
+            TestContext.Current.CancellationToken);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal((ulong)wayCount, data.OsmWayCount);
+        return allocated;
+    }
+
     private static long MeasureWayAllocations(int wayCount, bool transientTags)
     {
         var parser = new PbfGraphParser();
@@ -98,6 +124,42 @@ public sealed class PbfGraphParserAllocationTests
                     checked((ulong)(index + 1)),
                     [firstNode, firstNode + 1],
                     tags);
+            }
+        }
+    }
+
+    private sealed class ReusableTaggedWaySource : IOsmPbfEntitySource
+    {
+        private readonly int wayCount;
+        private readonly OsmPbfTransientTagDictionary tags = new(1);
+        private readonly ulong[] nodeReferences = [1, 2];
+
+        public ReusableTaggedWaySource(int wayCount) => this.wayCount = wayCount;
+
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            if (pass != OsmPbfEntityPass.Ways)
+            {
+                return;
+            }
+
+            for (var index = 0; index < wayCount; index++)
+            {
+                if ((index & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                tags.Clear();
+                tags["highway"] = "residential";
+                visitor.Way(checked((ulong)(index + 1)), nodeReferences, tags);
             }
         }
     }
