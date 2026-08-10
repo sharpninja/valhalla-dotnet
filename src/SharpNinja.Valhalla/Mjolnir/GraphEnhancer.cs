@@ -40,6 +40,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 using SharpNinja.Valhalla.Baldr;
@@ -72,6 +73,16 @@ public sealed class GraphEnhancer
     /// </summary>
     public sealed class EnhancerStats
     {
+        private readonly Dictionary<string, TimeSpan> stageDurations =
+            new(StringComparer.Ordinal)
+            {
+                ["deserialize"] = TimeSpan.Zero,
+                ["first-pass"] = TimeSpan.Zero,
+                ["density"] = TimeSpan.Zero,
+                ["second-pass"] = TimeSpan.Zero,
+                ["serialize"] = TimeSpan.Zero,
+            };
+
         /// <summary>Maximum density (km/km^2) seen across all tiles.</summary>
         public float MaxDensity { get; set; } = float.MinValue;
 
@@ -98,6 +109,12 @@ public sealed class GraphEnhancer
 
         /// <summary>Histogram of node densities (0-15).</summary>
         public uint[] DensityCounts { get; } = new uint[16];
+
+        /// <summary>Aggregate elapsed wall time for each measured enhancement sub-stage.</summary>
+        public IReadOnlyDictionary<string, TimeSpan> StageDurations => stageDurations;
+
+        internal void AddStageDuration(string stage, TimeSpan duration) =>
+            stageDurations[stage] += duration;
     }
 
     private readonly EnhancerStats _stats = new();
@@ -230,6 +247,11 @@ public sealed class GraphEnhancer
             _stats.TurnChannelCount += statistics.TurnChannelCount;
             _stats.RampCount += statistics.RampCount;
             _stats.PencilUCount += statistics.PencilUCount;
+            foreach ((string stage, TimeSpan duration) in statistics.StageDurations)
+            {
+                _stats.AddStageDuration(stage, duration);
+            }
+
             for (var index = 0; index < _stats.DensityCounts.Length; index++)
             {
                 _stats.DensityCounts[index] += statistics.DensityCounts[index];
@@ -299,7 +321,11 @@ public sealed class GraphEnhancer
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        long stageStart = Stopwatch.GetTimestamp();
         TileModel? tileOpt = reader.GetTile(tileId);
+        _stats.AddStageDuration(
+            "deserialize",
+            Stopwatch.GetElapsedTime(stageStart));
         if (tileOpt is null || tileOpt.NodeCount == 0)
         {
             // Empty tiles are skipped (added where ways go through a tile but no end node is within).
@@ -317,6 +343,7 @@ public sealed class GraphEnhancer
         var turnLanes = new List<TurnLanes>();
 
         // First pass - set headings + local driveability and opposing local index.
+        stageStart = Stopwatch.GetTimestamp();
         for (int i = 0; i < tile.NodeCount; i++)
         {
             if ((i & 4095) == 0)
@@ -396,10 +423,19 @@ public sealed class GraphEnhancer
             }
         }
 
+        _stats.AddStageDuration(
+            "first-pass",
+            Stopwatch.GetElapsedTime(stageStart));
+
         // Density index (urban tag not used in this build, so always compute).
+        stageStart = Stopwatch.GetTimestamp();
         DensityIndex densityIndex = BuildDensityIndex(reader, tile, level, cancellationToken);
+        _stats.AddStageDuration(
+            "density",
+            Stopwatch.GetElapsedTime(stageStart));
 
         // Second pass - enhance node and edge attributes.
+        stageStart = Stopwatch.GetTimestamp();
         PointLL baseLl = tile.BaseLl;
         for (int i = 0; i < tile.NodeCount; i++)
         {
@@ -437,6 +473,15 @@ public sealed class GraphEnhancer
             // backing store the builder mutates), reproducing the in-place semantics exactly.
             uint edgeIndex = nodeinfo.EdgeIndex;
             uint edgeCount = nodeinfo.EdgeCount;
+            uint ntrans = nodeinfo.LocalEdgeCount;
+            var transitionStreetNames = new StreetNames[checked((int)ntrans)];
+            for (uint k = 0; k < ntrans; k++)
+            {
+                DirectedEdge transitionEdge = tile.DirectedEdgeRef((int)(edgeIndex + k));
+                transitionStreetNames[(int)k] = StreetNamesFactory.Create(
+                    countryCode,
+                    tile.EdgeInfoFor(transitionEdge).GetNames(false));
+            }
 
             uint drivableCount = 0;
             for (uint j = 0; j < edgeCount; j++)
@@ -484,11 +529,12 @@ public sealed class GraphEnhancer
                 UpdateSpeed(ref directededge, density, inferTurnChannels);
 
                 // Name continuity - on the directed edge.
-                uint ntrans = nodeinfo.LocalEdgeCount;
+                StreetNames streetNames = j < ntrans
+                    ? transitionStreetNames[(int)j]
+                    : StreetNamesFactory.Create(countryCode, names);
                 for (uint k = 0; k < ntrans; k++)
                 {
-                    DirectedEdge fromedge = tile.DirectedEdgeRef((int)(nodeinfo.EdgeIndex + k));
-                    if (ConsistentNames(countryCode, names, tile.EdgeInfoFor(fromedge).GetNames(false)))
+                    if (ConsistentNames(streetNames, transitionStreetNames[(int)k]))
                     {
                         directededge.SetNameConsistency(k, true);
                     }
@@ -572,14 +618,23 @@ public sealed class GraphEnhancer
             nodeinfo.SetTransitionIndex(0);
         }
 
+        _stats.AddStageDuration(
+            "second-pass",
+            Stopwatch.GetElapsedTime(stageStart));
+
         _ = arBefore;
         _ = tlBefore;
 
         // Replace access restrictions and turn lanes, then reserialize the tile.
+        stageStart = Stopwatch.GetTimestamp();
         tile.SetAccessRestrictions(accessRestrictions);
         tile.SetTurnLanes(turnLanes);
+        byte[] serialized = tile.Serialize();
+        _stats.AddStageDuration(
+            "serialize",
+            Stopwatch.GetElapsedTime(stageStart));
 
-        return tile.Serialize();
+        return serialized;
     }
 
     // ------------------------------------------------------------------
@@ -1656,13 +1711,9 @@ public sealed class GraphEnhancer
     // ------------------------------------------------------------------
 
     private static bool ConsistentNames(
-        string countryCode,
-        List<(string Name, bool IsRouteNum)> names1,
-        List<(string Name, bool IsRouteNum)> names2)
+        StreetNames streetNames1,
+        StreetNames streetNames2)
     {
-        StreetNames streetNames1 = StreetNamesFactory.Create(countryCode, names1);
-        StreetNames streetNames2 = StreetNamesFactory.Create(countryCode, names2);
-
         // Consistent when neither has names.
         if (streetNames1.Count == 0 && streetNames2.Count == 0)
         {
@@ -1670,7 +1721,7 @@ public sealed class GraphEnhancer
         }
 
         // Consistent if the common base names are not empty.
-        return streetNames1.FindCommonBaseNames(streetNames2).Count != 0;
+        return streetNames1.HasCommonBaseName(streetNames2);
     }
 
     // ------------------------------------------------------------------

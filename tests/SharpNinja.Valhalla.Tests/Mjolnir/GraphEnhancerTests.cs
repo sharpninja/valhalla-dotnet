@@ -39,6 +39,22 @@ public class GraphEnhancerTests
     }
 
     [Fact]
+    public void Enhance_ReportsOrderedStageDurations()
+    {
+        Dictionary<GraphId, byte[]> tiles = BuildTiles(out _);
+
+        var enhancer = new GraphEnhancer();
+        _ = enhancer.Enhance(tiles);
+
+        Assert.Equal(
+            new[] { "deserialize", "first-pass", "density", "second-pass", "serialize" },
+            enhancer.Stats.StageDurations.Keys);
+        Assert.All(
+            enhancer.Stats.StageDurations.Values,
+            duration => Assert.True(duration >= TimeSpan.Zero));
+    }
+
+    [Fact]
     public void Enhance_ProducesByteCompatibleTile_RoundTripsThroughReader()
     {
         Dictionary<GraphId, byte[]> tiles = BuildTiles(out _);

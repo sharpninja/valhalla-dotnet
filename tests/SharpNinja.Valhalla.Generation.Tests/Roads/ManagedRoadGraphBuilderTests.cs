@@ -39,6 +39,11 @@ public sealed class ManagedRoadGraphBuilderTests
             Assert.True(result.TileBuilderResult.Success);
             Assert.True(result.TileBuilderResult.TileCount > 0);
             Assert.True(result.TileBuilderResult.WayCount > 0);
+            Assert.All(
+                new[] { "deserialize", "first-pass", "density", "second-pass", "serialize" },
+                stage => Assert.Contains(
+                    $"enhance.tile.{stage}",
+                    result.TileBuilderResult.StageDurations));
             StreamingOsmPbfBlockReceipt[] dataBlocks = result.PbfMetrics
                 .BlockReceipts
                 .Where(receipt => receipt.BlobType == "OSMData")

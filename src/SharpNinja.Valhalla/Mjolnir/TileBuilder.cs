@@ -189,7 +189,9 @@ public sealed class TileBuilderResult
     /// <summary>Statistics from the validate stage (or null if validation did not run).</summary>
     public GraphValidator.ValidatorStats? ValidatorStats { get; set; }
 
-    /// <summary>Elapsed wall time for each tile construction stage.</summary>
+    /// <summary>
+    /// Elapsed wall time for pipeline stages and aggregate worker time for <c>.tile.</c> sub-stages.
+    /// </summary>
     public IReadOnlyDictionary<string, TimeSpan> StageDurations =>
         stageDurations;
 
@@ -340,6 +342,12 @@ public static class TileBuilder
         stageStopwatch.Stop();
         result.RecordStageDuration("enhance", stageStopwatch.Elapsed);
         result.EnhancerStats = enhancer.Stats;
+        foreach ((string enhancementStage, TimeSpan duration) in
+                 result.EnhancerStats.StageDurations)
+        {
+            result.RecordStageDuration($"enhance.tile.{enhancementStage}", duration);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
 
         stageStopwatch.Restart();
