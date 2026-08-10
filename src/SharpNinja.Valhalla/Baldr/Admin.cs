@@ -135,6 +135,15 @@ public struct Admin
     public readonly uint CountryOffset => _countryOffset;
 
     /// <summary>
+    /// Gets the packed two-byte country ISO code without allocating a managed string.
+    /// Zero denotes an unset country code.
+    /// </summary>
+    internal readonly ushort CountryIsoCodeValue =>
+        _countryIso0 == (byte)'\0'
+            ? (ushort)0
+            : (ushort)(_countryIso0 | (_countryIso1 << 8));
+
+    /// <summary>
     /// Gets the country ISO3166-1 code. Returns an empty string when unset.
     /// </summary>
     public readonly string CountryIsoCode()

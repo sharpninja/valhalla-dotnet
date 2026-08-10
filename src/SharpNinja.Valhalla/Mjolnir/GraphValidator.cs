@@ -276,7 +276,7 @@ public static class GraphValidator
                 }
             }
 
-            string beginNodeIso = tile.Admin((int)nodeinfo.AdminIndex).CountryIsoCode();
+            ushort beginNodeIso = tile.Admin((int)nodeinfo.AdminIndex).CountryIsoCodeValue;
 
             // Go through directed edges and validate/update data.
             uint idx = ni.EdgeIndex;
@@ -353,10 +353,10 @@ public static class GraphValidator
                 // Set the opposing edge index and get the country ISO at the end node. Set the deadend
                 // flag and internal flag (if the opposing edge is internal then make sure this edge is
                 // as well).
-                ulong wayid = tile.EdgeInfo(directededge).WayId;
+                ulong wayid = tile.EdgeInfoWayId(directededge);
                 uint oppIndex = GetOpposingEdgeIndex(
                     node, ref directededge, wayid, tile, endnodeTile, problemWays,
-                    ref dupcount, out string endNodeIso, transitLevel);
+                    ref dupcount, out ushort endNodeIso, transitLevel);
                 directededge.SetOppIndex(oppIndex);
                 if (directededge.Use == Use.TransitConnection ||
                     directededge.Use == Use.EgressConnection ||
@@ -366,8 +366,7 @@ public static class GraphValidator
                 }
 
                 // Mark a country crossing if country ISO codes do not match.
-                if (!string.IsNullOrEmpty(beginNodeIso) && !string.IsNullOrEmpty(endNodeIso) &&
-                    !string.Equals(beginNodeIso, endNodeIso, StringComparison.Ordinal))
+                if (beginNodeIso != 0 && endNodeIso != 0 && beginNodeIso != endNodeIso)
                 {
                     directededge.SetCtryCrossing(true);
                 }
@@ -485,10 +484,10 @@ public static class GraphValidator
         GraphTile? endTile,
         HashSet<ulong> problemWays,
         ref uint dupcount,
-        out string endnodeiso,
+        out ushort endnodeiso,
         byte transitLevel)
     {
-        endnodeiso = string.Empty;
+        endnodeiso = 0;
         if (endTile is null)
         {
             // LOG_WARN("End tile invalid.");
@@ -509,7 +508,7 @@ public static class GraphValidator
         }
 
         // Set the end node iso. Used for country crossings.
-        endnodeiso = endTile.Admin((int)nodeinfo.AdminIndex).CountryIsoCode();
+        endnodeiso = endTile.Admin((int)nodeinfo.AdminIndex).CountryIsoCodeValue;
 
         // Set the deadend flag on the edge.
         bool deadend = nodeinfo.Intersection == IntersectionType.DeadEnd;
@@ -533,7 +532,7 @@ public static class GraphValidator
 
             // Transit connections. Match opposing edge if same way Id.
             if (edge.Use == Use.TransitConnection && directededge.Use == Use.TransitConnection &&
-                wayid == endTile.EdgeInfo(directededge).WayId)
+                wayid == endTile.EdgeInfoWayId(directededge))
             {
                 oppIndex = i;
                 continue;
@@ -598,7 +597,7 @@ public static class GraphValidator
                 {
                     // Regular edges - match wayids and edge info offset (if in same tile) or shape (if
                     // not in same tile).
-                    wayid2 = endTile.EdgeInfo(directededge).WayId;
+                    wayid2 = endTile.EdgeInfoWayId(directededge);
                     if (wayid == wayid2)
                     {
                         if (sametile && edge.EdgeInfoOffset == directededge.EdgeInfoOffset)

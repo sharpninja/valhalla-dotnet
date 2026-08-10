@@ -7,6 +7,91 @@ namespace SharpNinja.Valhalla.Tests.Mjolnir;
 public sealed class GraphValidationParityTests
 {
     [Fact]
+    public void RefreshTilesetFiles_AtomicallyWritesEachTileOnce()
+    {
+        string tileDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-383-checksum-io-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tileDirectory);
+
+        try
+        {
+            var firstId = new GraphId(1, 2, 0);
+            var secondId = new GraphId(2, 2, 0);
+            new GraphTileBuilder(firstId).StoreTileData(tileDirectory);
+            new GraphTileBuilder(secondId).StoreTileData(tileDirectory);
+
+            var writes = new Dictionary<string, int>(StringComparer.Ordinal);
+            ushort buildId = GraphTileChecksum.RefreshTilesetFiles(
+                tileDirectory,
+                TestContext.Current.CancellationToken,
+                path =>
+                {
+                    writes.TryGetValue(path, out int count);
+                    writes[path] = count + 1;
+                });
+
+            string[] tilePaths =
+                Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
+            Assert.Equal(tilePaths.Length, writes.Count);
+            Assert.All(writes.Values, static count => Assert.Equal(1, count));
+
+            foreach (string tilePath in tilePaths)
+            {
+                byte[] tileBytes = File.ReadAllBytes(tilePath);
+                GraphTileHeader header = GraphTileHeader.FromBytes(tileBytes);
+                Assert.Equal(buildId, header.BuildId());
+                Assert.Equal(
+                    GraphTileChecksum.ComputeTileHash(
+                        tileBytes.AsSpan(GraphTileHeader.HeaderSize)),
+                    header.TileChecksum());
+            }
+        }
+        finally
+        {
+            Directory.Delete(tileDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ValidatorHotPathAccessors_MatchDecodedValuesWithoutPerEdgeAllocations()
+    {
+        BuildSyntheticInput(out List<OSMWay> ways, out List<OSMWayNode> wayNodes);
+        GraphBuilder.Graph graph = GraphBuilder.BuildEdges(ways, wayNodes);
+        Dictionary<GraphId, byte[]> generated =
+            GraphBuilder.Build(new OSMData(), ways, wayNodes, graph);
+
+        byte[] tileBytes = generated.Values.First(
+            static bytes => GraphTileHeader.FromBytes(bytes).Directededgecount() > 0);
+        GraphTile tile = GraphTile.Create(
+            GraphTileHeader.FromBytes(tileBytes).Graphid(),
+            tileBytes);
+        DirectedEdge edge = tile.DirectedEdge(0);
+        Admin admin = tile.Admin(0);
+
+        Assert.Equal(tile.EdgeInfo(edge).WayId, tile.EdgeInfoWayId(edge));
+        string countryIso = admin.CountryIsoCode();
+        ushort expectedCountryIso = countryIso.Length == 0
+            ? (ushort)0
+            : (ushort)(countryIso[0] | (countryIso[1] << 8));
+        Assert.Equal(expectedCountryIso, admin.CountryIsoCodeValue);
+
+        _ = tile.EdgeInfoWayId(edge);
+        _ = admin.CountryIsoCodeValue;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        ulong checksum = 0;
+        for (int index = 0; index < 100_000; index++)
+        {
+            checksum ^= tile.EdgeInfoWayId(edge);
+            checksum ^= admin.CountryIsoCodeValue;
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(checksum);
+        Assert.InRange(allocated, 0, 1_024);
+    }
+
+    [Fact]
     public void DiscretizedBoundingCircle_MatchesOfficialPackingAndCoverage()
     {
         var binCenter = new PointLL(-86.6750, 36.1225);

@@ -95,7 +95,13 @@ public static class GraphTileChecksum
     /// </summary>
     public static ushort RefreshTilesetFiles(
         string tileDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        RefreshTilesetFiles(tileDirectory, cancellationToken, onTileWritten: null);
+
+    internal static ushort RefreshTilesetFiles(
+        string tileDirectory,
+        CancellationToken cancellationToken,
+        Action<string>? onTileWritten)
     {
         ArgumentException.ThrowIfNullOrEmpty(tileDirectory);
         cancellationToken.ThrowIfCancellationRequested();
@@ -104,28 +110,44 @@ public static class GraphTileChecksum
             Directory.GetFiles(tileDirectory, "*.gph", SearchOption.AllDirectories);
         Array.Sort(tilePaths, StringComparer.Ordinal);
 
+        var tileHashes = new ulong[tilePaths.Length];
         ulong accumulator = 0;
-        foreach (string tilePath in tilePaths)
+        for (int index = 0; index < tilePaths.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] tile = File.ReadAllBytes(tilePath);
+            byte[] tile = File.ReadAllBytes(tilePaths[index]);
             cancellationToken.ThrowIfCancellationRequested();
-            ulong tileHash = RefreshTileHash(tile);
+            GraphTileHeader header = GraphTileHeader.FromBytes(tile);
+            if (header.EndOffset() != tile.Length)
+            {
+                throw new InvalidDataException(
+                    $"Tile end offset {header.EndOffset()} does not match byte length {tile.Length}.");
+            }
+
+            ulong tileHash = ComputeTileHash(tile.AsSpan(GraphTileHeader.HeaderSize));
+            tileHashes[index] = tileHash;
             accumulator = unchecked(accumulator + tileHash);
-            WriteTileAtomically(tilePath, tile);
         }
 
         ushort buildId = FoldTilesetHashAccumulator(accumulator);
         ulong buildIdBits = (ulong)buildId << GraphTileHeader.TileHashBits;
-        foreach (string tilePath in tilePaths)
+        for (int index = 0; index < tilePaths.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            string tilePath = tilePaths[index];
             byte[] tile = File.ReadAllBytes(tilePath);
             cancellationToken.ThrowIfCancellationRequested();
             GraphTileHeader header = GraphTileHeader.FromBytes(tile);
-            header.SetRawChecksum(buildIdBits | header.TileChecksum());
+            if (header.EndOffset() != tile.Length)
+            {
+                throw new InvalidDataException(
+                    $"Tile end offset {header.EndOffset()} does not match byte length {tile.Length}.");
+            }
+
+            header.SetRawChecksum(buildIdBits | tileHashes[index]);
             header.AsSpan().CopyTo(tile);
             WriteTileAtomically(tilePath, tile);
+            onTileWritten?.Invoke(tilePath);
         }
 
         return buildId;

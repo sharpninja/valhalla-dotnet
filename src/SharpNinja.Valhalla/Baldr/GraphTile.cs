@@ -850,6 +850,41 @@ public sealed class GraphTile : IGraphTilePtr
         return buf;
     }
 
+    /// <summary>
+    /// Reads only the OSM way identifier for a directed edge without constructing an
+    /// <see cref="EdgeInfoRec"/> object or decoding its names and shape.
+    /// </summary>
+    internal ulong EdgeInfoWayId(DirectedEdgeRec edge)
+    {
+        int ptr = _edgeInfoOffset + checked((int)edge.EdgeInfoOffset);
+        uint word0 = ReadUInt32(_blob, ptr);
+        uint word1 = ReadUInt32(_blob, ptr + 4);
+        uint word2 = ReadUInt32(_blob, ptr + 8);
+
+        ulong wayId =
+            word0 |
+            ((ulong)((word1 >> 24) & 0xFFu) << 32) |
+            ((ulong)((word2 >> 20) & 0xFFu) << 40);
+
+        uint extendedWayIdSize = (word2 >> 28) & 0x3u;
+        int extendedWayIdOffset =
+            ptr +
+            EdgeInfoRec.EdgeInfoInnerSize +
+            checked((int)(word2 & 0xFu) * EdgeInfoRec.NameInfoSize) +
+            checked((int)((word2 >> 4) & 0xFFFFu));
+        if (extendedWayIdSize > 0)
+        {
+            wayId |= (ulong)_blob[extendedWayIdOffset] << 48;
+        }
+
+        if (extendedWayIdSize > 1)
+        {
+            wayId |= (ulong)_blob[extendedWayIdOffset + 1] << 56;
+        }
+
+        return wayId;
+    }
+
     /// <summary>Gets the edge info for a directed edge. Faithful port of <c>edgeinfo(const DirectedEdge*)</c>.</summary>
     public EdgeInfoRec EdgeInfo(DirectedEdgeRec edge)
     {
