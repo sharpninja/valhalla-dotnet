@@ -414,6 +414,9 @@ public sealed class GraphValidationParityTests
                 Assert.Equal(
                     serialStats.Densities[level].Order(),
                     parallelStats.Densities[level].Order());
+                Assert.Equal(
+                    parallelStats.Densities[level].Order(),
+                    parallelStats.Densities[level]);
             }
         }
         finally

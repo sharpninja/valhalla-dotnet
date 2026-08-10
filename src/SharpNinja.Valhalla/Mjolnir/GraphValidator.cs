@@ -378,6 +378,11 @@ public static class GraphValidator
             worker.Reader.Trim();
         }
 
+        for (var level = 0; level < stats.Densities.Length; level++)
+        {
+            stats.Densities[level].Sort();
+        }
+
         stopwatch.Stop();
         stats.RecordStageDuration("tiles", stopwatch.Elapsed);
         stopwatch.Restart();
