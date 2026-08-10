@@ -295,6 +295,133 @@ public sealed class GraphValidationParityTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(4, 4)]
+    [InlineData(8, 4)]
+    [InlineData(16, 4)]
+    public void ParallelValidationDegree_UsesProfiledContentionCap(
+        int requested,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            GraphValidator.ResolveParallelValidationDegree(requested));
+    }
+
+    [Fact]
+    public void ParallelValidationWorkerCache_SharesConfiguredBudget()
+    {
+        var config = new GraphReader.Config
+        {
+            TileDir = "tiles",
+            MaxCacheSize = 1_024,
+            UseLruMemCache = true,
+            LruMemCacheHardControl = true,
+            MaxConcurrentReaderUsers = 8,
+        };
+
+        GraphReader.Config workerConfig =
+            GraphValidator.CreateParallelWorkerConfig(
+                config,
+                maxDegreeOfParallelism: 4);
+
+        Assert.Equal(config.TileDir, workerConfig.TileDir);
+        Assert.Equal(256, workerConfig.MaxCacheSize);
+        Assert.True(workerConfig.UseLruMemCache);
+        Assert.True(workerConfig.LruMemCacheHardControl);
+        Assert.Equal(config.MaxConcurrentReaderUsers, workerConfig.MaxConcurrentReaderUsers);
+    }
+
+    [Fact]
+    public void ParallelValidation_MatchesSerialOutput()
+    {
+        string rootDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-383-parallel-validation-" + Guid.NewGuid().ToString("N"));
+        string serialDirectory = Path.Combine(rootDirectory, "serial");
+        string parallelDirectory = Path.Combine(rootDirectory, "parallel");
+        Directory.CreateDirectory(serialDirectory);
+        Directory.CreateDirectory(parallelDirectory);
+
+        try
+        {
+            OSMNode west = MakeNode(1, -87.1000, 36.1200, intersection: true);
+            OSMNode middle = MakeNode(2, -86.6800, 36.1200, intersection: true);
+            OSMNode east = MakeNode(3, -86.2000, 36.1200, intersection: true);
+            OSMWay firstWay = MakeWay(100);
+            firstWay.SetNodeCount(2);
+            OSMWay secondWay = MakeWay(101);
+            secondWay.SetNodeCount(2);
+            var ways = new List<OSMWay> { firstWay, secondWay };
+            var wayNodes = new List<OSMWayNode>
+            {
+                MakeWayNode(west, 0, 0),
+                MakeWayNode(middle, 0, 1),
+                MakeWayNode(middle, 1, 0),
+                MakeWayNode(east, 1, 1),
+            };
+            GraphBuilder.Graph graph = GraphBuilder.BuildEdges(ways, wayNodes);
+            Dictionary<GraphId, byte[]> generated =
+                GraphBuilder.Build(new OSMData(), ways, wayNodes, graph);
+            Assert.True(generated.Count > 1, "The fixture must span multiple graph tiles.");
+
+            foreach ((GraphId graphId, byte[] tileBytes) in generated)
+            {
+                string relativePath = GraphTile.FileSuffix(graphId);
+                string serialPath = Path.Combine(serialDirectory, relativePath);
+                string parallelPath = Path.Combine(parallelDirectory, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(serialPath)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(parallelPath)!);
+                File.WriteAllBytes(serialPath, tileBytes);
+                File.WriteAllBytes(parallelPath, tileBytes);
+            }
+
+            GraphValidator.ValidatorStats serialStats =
+                GraphValidator.Validate(
+                    new GraphReader.Config { TileDir = serialDirectory },
+                    TestContext.Current.CancellationToken);
+            GraphValidator.ValidatorStats parallelStats =
+                GraphValidator.Validate(
+                    new GraphReader.Config { TileDir = parallelDirectory },
+                    maxDegreeOfParallelism: 4,
+                    TestContext.Current.CancellationToken);
+
+            string[] serialFiles = Directory
+                .GetFiles(serialDirectory, "*.gph", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(serialDirectory, path))
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            string[] parallelFiles = Directory
+                .GetFiles(parallelDirectory, "*.gph", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(parallelDirectory, path))
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Equal(serialFiles, parallelFiles);
+            foreach (string relativePath in serialFiles)
+            {
+                Assert.Equal(
+                    File.ReadAllBytes(Path.Combine(serialDirectory, relativePath)),
+                    File.ReadAllBytes(Path.Combine(parallelDirectory, relativePath)));
+            }
+
+            Assert.Equal(serialStats.TileCount, parallelStats.TileCount);
+            Assert.Equal(serialStats.Duplicates, parallelStats.Duplicates);
+            for (var level = 0; level < serialStats.Densities.Length; level++)
+            {
+                Assert.Equal(
+                    serialStats.Densities[level].Order(),
+                    parallelStats.Densities[level].Order());
+            }
+        }
+        finally
+        {
+            Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public void TweenOnlyTiles_PreserveDatasetIdentity()
     {

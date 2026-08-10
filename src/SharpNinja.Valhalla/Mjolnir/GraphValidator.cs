@@ -19,11 +19,11 @@
 // producing byte-identical tiles the Baldr GraphTile reader parses.
 //
 // PORT-NOTES / OMISSIONS (consistent with the established mjolnir port scope):
-//   - THREADING: the C++ validate() runs one worker thread per mjolnir.concurrency, popping a
-//     shuffled tile queue under a mutex and merging per-thread results. This port processes the tile
-//     set serially (matching the in-memory, single-threaded mjolnir port slice). The per-tile work is
-//     identical and order-independent (each tile reads its own + neighboring tiles read-only and
-//     writes only itself), so the resulting tiles are the same bytes the threaded build produces.
+//   - THREADING: validation supports bounded worker-local readers after the tile set and dataset
+//     identity are frozen. Requested concurrency is capped at the profiled degree of four because a
+//     Nashville DOP-16 probe exposed cross-tile read and binning contention. Worker caches divide the
+//     configured reader budget, per-worker results are merged deterministically, and tweener writes
+//     and checksum publication remain behind explicit barriers. The legacy overload stays serial.
 //   - EDGE BINNING (tweeners / GraphTileBuilder::BinEdges / AddBins): NOT ported. Edge bins are the
 //     spatial index used by loki edge-search-by-bin; this port snaps via the ported loki
 //     ClosestFirstGenerator over the tile node/edge geometry, not the bins, so the bin section and
@@ -37,6 +37,7 @@
 //     and density bookkeeping the C++ logs is surfaced on the stats object so tests can assert it.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 
@@ -53,6 +54,8 @@ namespace SharpNinja.Valhalla.Mjolnir;
 /// </summary>
 public static class GraphValidator
 {
+    private const int MaximumProfiledParallelValidationDegree = 4;
+
     // Custom comparator to sort by GraphId (level desc, tile_id asc, id asc). Faithful port of the
     // anonymous-namespace graphid_less (used by the excluded bin sort; reproduced for completeness).
     internal static bool GraphIdLess(GraphId a, GraphId b)
@@ -129,10 +132,29 @@ public static class GraphValidator
     /// </summary>
     public static ValidatorStats Validate(
         GraphReader.Config config,
+        CancellationToken cancellationToken) =>
+        Validate(
+            config,
+            maxDegreeOfParallelism: 1,
+            cancellationToken);
+
+    /// <summary>
+    /// Validates graph tiles with bounded worker-local readers and deterministic result merging.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return Validate(new GraphReader(config), config.TileDir, cancellationToken);
+        int effectiveDegree = ResolveParallelValidationDegree(
+            maxDegreeOfParallelism);
+        return effectiveDegree == 1
+            ? Validate(new GraphReader(config), config.TileDir, cancellationToken)
+            : ValidateParallel(
+                config,
+                effectiveDegree,
+                cancellationToken);
     }
 
     /// <summary>
@@ -255,6 +277,206 @@ public static class GraphValidator
         stopwatch.Stop();
         stats.RecordStageDuration("checksums", stopwatch.Elapsed);
         return stats;
+    }
+
+    internal static int ResolveParallelValidationDegree(
+        int requestedDegree)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requestedDegree);
+        return Math.Min(
+            requestedDegree,
+            MaximumProfiledParallelValidationDegree);
+    }
+
+    internal static GraphReader.Config CreateParallelWorkerConfig(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        return new GraphReader.Config
+        {
+            TileDir = config.TileDir,
+            MaxCacheSize = Math.Max(
+                1,
+                config.MaxCacheSize / maxDegreeOfParallelism),
+            UseLruMemCache = config.UseLruMemCache,
+            LruMemCacheHardControl = config.LruMemCacheHardControl,
+            UseSimpleMemCache = config.UseSimpleMemCache,
+            GlobalSynchronizedCache = config.GlobalSynchronizedCache,
+            MaxConcurrentReaderUsers = config.MaxConcurrentReaderUsers,
+            TrafficSnapshot = config.TrafficSnapshot,
+        };
+    }
+
+    private static ValidatorStats ValidateParallel(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var stats = new ValidatorStats();
+        var stopwatch = Stopwatch.StartNew();
+        byte transitLevel = TileHierarchy.GetTransitLevel().Level;
+        GraphReader.Config workerConfig = CreateParallelWorkerConfig(
+            config,
+            maxDegreeOfParallelism);
+        var discoveryReader = new GraphReader(workerConfig);
+        var tileSet = new List<GraphId>(discoveryReader.GetTileSet());
+        tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
+        stats.TileCount = tileSet.Count;
+
+        ulong datasetId = 0;
+        if (tileSet.Count > 0)
+        {
+            GraphTile? firstTile = discoveryReader.GetGraphTile(tileSet[0]);
+            if (firstTile is null)
+            {
+                throw new InvalidDataException(
+                    "The graph tile set contains an unreadable first tile.");
+            }
+
+            datasetId = firstTile.Header().DatasetId();
+        }
+
+        discoveryReader.Clear();
+        var completedWorkers = new ConcurrentBag<ValidationWorker>();
+        Parallel.ForEach(
+            tileSet,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+            },
+            () => new ValidationWorker(workerConfig),
+            (tileId, _, worker) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateTile(
+                    worker.Reader,
+                    config.TileDir,
+                    tileId,
+                    transitLevel,
+                    worker.ProblemWays,
+                    worker.Stats,
+                    worker.Tweeners,
+                    cancellationToken);
+                if (worker.Reader.OverCommitted())
+                {
+                    worker.Reader.Trim();
+                }
+
+                return worker;
+            },
+            completedWorkers.Add);
+
+        var tweeners = new EdgeBinner.Tweeners();
+        foreach (ValidationWorker worker in completedWorkers)
+        {
+            MergeWorkerStats(stats, worker.Stats);
+            MergeTweeners(tweeners, worker.Tweeners);
+            worker.Reader.Trim();
+        }
+
+        stopwatch.Stop();
+        stats.RecordStageDuration("tiles", stopwatch.Elapsed);
+        stopwatch.Restart();
+
+        discoveryReader.Trim();
+        byte localLevel = TileHierarchy.Levels()[^1].Level;
+        foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var tweenTileId = new GraphId(tw.Key);
+            GraphTile? tile = GraphTile.Create(config.TileDir, tweenTileId);
+            if (tile is null)
+            {
+                var empty = new GraphTileBuilder(tweenTileId);
+                empty.HeaderBuilder.SetDatasetId(datasetId);
+                empty.StoreTileData(config.TileDir);
+                tile = GraphTile.Create(config.TileDir, tweenTileId);
+                if (tile is null)
+                {
+                    continue;
+                }
+            }
+
+            if (tile.Id().Level() != localLevel)
+            {
+                continue;
+            }
+
+            EdgeBinner.SortBins(tw.Value);
+            EdgeBinner.AddBins(config.TileDir, tile, tw.Value);
+        }
+
+        stopwatch.Stop();
+        stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
+        stopwatch.Restart();
+
+        GraphTileChecksum.RefreshTilesetFiles(config.TileDir, cancellationToken);
+        stopwatch.Stop();
+        stats.RecordStageDuration("checksums", stopwatch.Elapsed);
+        return stats;
+    }
+
+    private static void MergeWorkerStats(
+        ValidatorStats destination,
+        ValidatorStats source)
+    {
+        for (var level = 0; level < destination.Duplicates.Length; level++)
+        {
+            destination.Duplicates[level] = checked(
+                destination.Duplicates[level] + source.Duplicates[level]);
+            destination.Densities[level].AddRange(source.Densities[level]);
+        }
+
+        foreach ((string stage, TimeSpan duration) in source.TileStageDurations)
+        {
+            destination.AddTileStageDuration(stage, duration);
+        }
+    }
+
+    private static void MergeTweeners(
+        EdgeBinner.Tweeners destination,
+        EdgeBinner.Tweeners source)
+    {
+        foreach ((ulong tileId, List<EdgeBinner.BinEntry>[] sourceBins) in source)
+        {
+            if (!destination.TryGetValue(
+                    tileId,
+                    out List<EdgeBinner.BinEntry>[]? destinationBins))
+            {
+                destinationBins = new List<EdgeBinner.BinEntry>[sourceBins.Length];
+                for (var bin = 0; bin < destinationBins.Length; bin++)
+                {
+                    destinationBins[bin] = new List<EdgeBinner.BinEntry>();
+                }
+
+                destination.Add(tileId, destinationBins);
+            }
+
+            for (var bin = 0; bin < sourceBins.Length; bin++)
+            {
+                destinationBins[bin].AddRange(sourceBins[bin]);
+            }
+        }
+    }
+
+    private sealed class ValidationWorker
+    {
+        internal ValidationWorker(GraphReader.Config config)
+        {
+            Reader = new GraphReader(config);
+        }
+
+        internal GraphReader Reader { get; }
+
+        internal HashSet<ulong> ProblemWays { get; } = [];
+
+        internal ValidatorStats Stats { get; } = new();
+
+        internal EdgeBinner.Tweeners Tweeners { get; } = new();
     }
 
     // Faithful port of the per-tile body of the C++ validate() worker loop.

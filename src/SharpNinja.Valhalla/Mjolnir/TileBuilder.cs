@@ -420,6 +420,7 @@ public static class TileBuilder
         stageStopwatch.Restart();
         result.ValidatorStats = GraphValidator.Validate(
             MakeReaderConfig(tileDir, config),
+            config.MaxDegreeOfParallelism,
             cancellationToken);
         stageStopwatch.Stop();
         result.RecordStageDuration("validate", stageStopwatch.Elapsed);
