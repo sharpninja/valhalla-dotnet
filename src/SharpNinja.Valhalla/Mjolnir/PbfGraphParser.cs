@@ -29,6 +29,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 
@@ -97,6 +98,7 @@ public sealed class PbfGraphParser
     private readonly bool _allowAltName;
     private readonly bool _useUrbanTag;
     private readonly bool _useRestArea;
+    private readonly IReadOnlyDictionary<string, string> _emptyNodeTags;
 
     private readonly OSMData _osmdata = new();
     private List<OSMWay> _ways = new();
@@ -136,6 +138,8 @@ public sealed class PbfGraphParser
     private string _wayName = string.Empty;
     private string _wayRef = string.Empty;
 
+    private readonly Dictionary<string, TimeSpan> _lastParseStageDurations =
+        new(StringComparer.Ordinal);
     private ulong _lastNode;
     private ulong _lastWay;
     private ulong _lastRelation;
@@ -160,7 +164,15 @@ public sealed class PbfGraphParser
         _allowAltName = options.AllowAltName;
         _useUrbanTag = options.UseUrbanTag;
         _useRestArea = options.UseRestArea;
+
+        var emptyNodeTags = new Dictionary<string, string>(StringComparer.Ordinal);
+        NodeTagTransform.Transform(emptyNodeTags);
+        _emptyNodeTags = emptyNodeTags;
     }
+
+    /// <summary>Elapsed time for each semantic PBF pass in the most recent parse.</summary>
+    public IReadOnlyDictionary<string, TimeSpan> LastParseStageDurations =>
+        _lastParseStageDurations;
 
     /// <summary>The ways collected during the ways pass (C++ <c>ways</c> sequence), in input order.</summary>
     public IReadOnlyList<OSMWay> Ways => _ways;
@@ -214,9 +226,21 @@ public sealed class PbfGraphParser
     {
         ArgumentNullException.ThrowIfNull(source);
 
+        _lastParseStageDurations.Clear();
+        var stageStopwatch = Stopwatch.StartNew();
         ParseWays(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["ways"] = stageStopwatch.Elapsed;
+
+        stageStopwatch.Restart();
         ParseNodes(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["nodes"] = stageStopwatch.Elapsed;
+
+        stageStopwatch.Restart();
         ParseRelations(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["relations"] = stageStopwatch.Elapsed;
 
         _osmdata.Initialized = true;
         return _osmdata;
@@ -632,8 +656,19 @@ public sealed class PbfGraphParser
         // C# code skipped the transform for untagged nodes, leaving access_mask absent so the node's
         // access stayed 0; that made every plain intersection node un-routable (Allowed(NodeInfo)
         // failed), trapping the bidirectional A* search.
-        var tags = new Dictionary<string, string>(rawTags);
-        NodeTagTransform.Transform(tags);
+        IReadOnlyDictionary<string, string> tags;
+        if (rawTags.Count == 0)
+        {
+            tags = _emptyNodeTags;
+        }
+        else
+        {
+            var transformedTags = new Dictionary<string, string>(
+                rawTags,
+                StringComparer.Ordinal);
+            NodeTagTransform.Transform(transformedTags);
+            tags = transformedTags;
+        }
 
         bool isHighwayJunction = tags.TryGetValue("highway", out string? hw) && hw == "motorway_junction";
         bool maybeNamedJunction = tags.TryGetValue("junction", out string? jn) && (jn == "named" || jn == "yes");

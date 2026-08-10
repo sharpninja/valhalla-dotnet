@@ -422,7 +422,7 @@ public sealed class IntermediateSequenceStore<T> : IIntermediateSequenceStore<T>
                 FileAccess.ReadWrite,
                 FileShare.Read,
                 bufferSize: 64 * 1024,
-                FileOptions.RandomAccess | FileOptions.WriteThrough);
+                FileOptions.SequentialScan);
         }
 
         public int Ordinal { get; }

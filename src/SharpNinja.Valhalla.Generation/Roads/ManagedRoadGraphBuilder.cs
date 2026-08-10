@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using SharpNinja.Valhalla.Generation.Pbf;
 using SharpNinja.Valhalla.Mjolnir;
 
@@ -16,7 +17,11 @@ public sealed record ManagedRoadGraphBuildResult(
     TileBuilderResult TileBuilderResult,
     StreamingOsmPbfReadMetrics PbfMetrics,
     long PeakIntermediateMemoryBytes,
-    long ScratchDiskHighWaterMarkBytes);
+    long ScratchDiskHighWaterMarkBytes,
+    TimeSpan PbfIngestionDuration,
+    TimeSpan SemanticParsingDuration,
+    TimeSpan TileConstructionDuration,
+    IReadOnlyDictionary<string, TimeSpan> SemanticStageDurations);
 
 /// <summary>
 /// Production road-graph composition that decodes physical PBF blocks once and supplies the core
@@ -57,7 +62,10 @@ public sealed class ManagedRoadGraphBuilder
         StreamingOsmPbfReadMetrics pbfMetrics;
         long peakIntermediateMemoryBytes;
         long scratchDiskHighWaterMarkBytes;
+        TimeSpan pbfIngestionDuration;
+        TimeSpan semanticParsingDuration;
 
+        var stageStopwatch = Stopwatch.StartNew();
         using (var source = await StoredOsmPbfEntitySource.CreateAsync(
                    request.OsmPbfPaths,
                    intermediateDirectory,
@@ -67,16 +75,23 @@ public sealed class ManagedRoadGraphBuilder
                    cancellationToken)
                .ConfigureAwait(false))
         {
+            stageStopwatch.Stop();
+            pbfIngestionDuration = stageStopwatch.Elapsed;
+
+            stageStopwatch.Restart();
             osmdata = await Task.Run(
                     () => parser.Parse(source, cancellationToken),
                     cancellationToken)
                 .ConfigureAwait(false);
+            stageStopwatch.Stop();
+            semanticParsingDuration = stageStopwatch.Elapsed;
             pbfMetrics = source.ReadResult.Metrics;
             peakIntermediateMemoryBytes = source.PeakIntermediateMemoryBytes;
             scratchDiskHighWaterMarkBytes = source.ScratchHighWaterMarkBytes;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        stageStopwatch.Restart();
         TileBuilderResult tileResult = await Task.Run(
                 () => TileBuilder.BuildParsedTileSet(
                     parser,
@@ -86,11 +101,18 @@ public sealed class ManagedRoadGraphBuilder
                     cancellationToken),
                 cancellationToken)
             .ConfigureAwait(false);
+        stageStopwatch.Stop();
 
         return new ManagedRoadGraphBuildResult(
             tileResult,
             pbfMetrics,
             peakIntermediateMemoryBytes,
-            scratchDiskHighWaterMarkBytes);
+            scratchDiskHighWaterMarkBytes,
+            pbfIngestionDuration,
+            semanticParsingDuration,
+            stageStopwatch.Elapsed,
+            new Dictionary<string, TimeSpan>(
+                parser.LastParseStageDurations,
+                StringComparer.Ordinal));
     }
 }

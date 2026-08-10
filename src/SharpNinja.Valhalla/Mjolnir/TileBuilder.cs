@@ -37,6 +37,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 
 using SharpNinja.Valhalla.Baldr;
@@ -187,6 +188,16 @@ public sealed class TileBuilderResult
 
     /// <summary>Statistics from the validate stage (or null if validation did not run).</summary>
     public GraphValidator.ValidatorStats? ValidatorStats { get; set; }
+
+    /// <summary>Elapsed wall time for each tile construction stage.</summary>
+    public IReadOnlyDictionary<string, TimeSpan> StageDurations =>
+        stageDurations;
+
+    private readonly Dictionary<string, TimeSpan> stageDurations =
+        new(StringComparer.Ordinal);
+
+    internal void RecordStageDuration(string stage, TimeSpan duration) =>
+        stageDurations[stage] = duration;
 }
 
 /// <summary>
@@ -307,6 +318,7 @@ public static class TileBuilder
                 parser,
                 osmdata,
                 config,
+                result,
                 cancellationToken);
         }
         finally
@@ -317,6 +329,7 @@ public static class TileBuilder
         cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kEnhance ---------------------------------------------------------
+        var stageStopwatch = Stopwatch.StartNew();
         var enhancer = new GraphEnhancer();
         Dictionary<GraphId, byte[]> enhanced = enhancer.Enhance(
             tiles,
@@ -324,10 +337,15 @@ public static class TileBuilder
             config.ParserOptions.InferTurnChannels,
             config.MaxDegreeOfParallelism,
             cancellationToken);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("enhance", stageStopwatch.Elapsed);
         result.EnhancerStats = enhancer.Stats;
         cancellationToken.ThrowIfCancellationRequested();
 
+        stageStopwatch.Restart();
         FlushTilesToDisk(tileDir, enhanced);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("flush", stageStopwatch.Elapsed);
         result.TileCount = enhanced.Count;
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -350,13 +368,19 @@ public static class TileBuilder
         // ---- kHierarchy / kShortcuts -----------------------------------------
         if (config.Hierarchy)
         {
+            stageStopwatch.Restart();
             HierarchyBuilder.Build(MakeReaderConfig(tileDir, config));
+            stageStopwatch.Stop();
+            result.RecordStageDuration("hierarchy", stageStopwatch.Elapsed);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (config.Shortcuts)
             {
+                stageStopwatch.Restart();
                 result.ShortcutStats = ShortcutBuilder.Build(
                     MakeReaderConfig(tileDir, config));
+                stageStopwatch.Stop();
+                result.RecordStageDuration("shortcuts", stageStopwatch.Elapsed);
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
@@ -365,16 +389,22 @@ public static class TileBuilder
         // The dedicated generation package composes elevation after the road graph.
 
         // ---- kRestrictions ----------------------------------------------------
+        stageStopwatch.Restart();
         var restrictionReader = new GraphReader(MakeReaderConfig(tileDir, config));
         result.RestrictionResults = RestrictionBuilder.Build(
             restrictionReader,
             complexRestrictionsFrom,
             complexRestrictionsTo);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("restrictions", stageStopwatch.Elapsed);
         cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kValidate --------------------------------------------------------
+        stageStopwatch.Restart();
         result.ValidatorStats = GraphValidator.Validate(
             MakeReaderConfig(tileDir, config));
+        stageStopwatch.Stop();
+        result.RecordStageDuration("validate", stageStopwatch.Elapsed);
         cancellationToken.ThrowIfCancellationRequested();
 
         result.Success = true;
@@ -385,10 +415,12 @@ public static class TileBuilder
         PbfGraphParser parser,
         OSMData osmdata,
         TileBuilderConfig config,
+        TileBuilderResult result,
         CancellationToken cancellationToken)
     {
         IReadOnlyList<OSMWay> ways = parser.Ways;
         IReadOnlyList<OSMWayNode> wayNodes = parser.WayNodes;
+        var stageStopwatch = Stopwatch.StartNew();
 
         // ---- kConstructEdges --------------------------------------------------
         GraphBuilder.Graph graph = GraphBuilder.BuildEdges(
@@ -396,10 +428,13 @@ public static class TileBuilder
             wayNodes,
             config.GridDivisions,
             config.ParserOptions.InferTurnChannels);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("constructEdges", stageStopwatch.Elapsed);
         cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kBuild -----------------------------------------------------------
-        return GraphBuilder.Build(
+        stageStopwatch.Restart();
+        Dictionary<GraphId, byte[]> tiles = GraphBuilder.Build(
             osmdata,
             ways,
             wayNodes,
@@ -407,6 +442,9 @@ public static class TileBuilder
             config.TileCreationDate,
             config.MaxDegreeOfParallelism,
             cancellationToken);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("build", stageStopwatch.Elapsed);
+        return tiles;
     }
 
     private static string NormalizeTileDir(string tileDir)

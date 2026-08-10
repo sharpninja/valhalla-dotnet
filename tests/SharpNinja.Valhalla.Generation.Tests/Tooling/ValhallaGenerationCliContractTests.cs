@@ -252,6 +252,27 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
             data.GetProperty("pbfDecompressionCount").GetInt32() - 1);
         Assert.True(
             data.GetProperty("peakIntermediateMemoryBytes").GetInt64() >= 0);
+        Assert.True(
+            data.GetProperty("pbfIngestionDurationMilliseconds").GetDouble() > 0);
+        Assert.True(
+            data.GetProperty("semanticParsingDurationMilliseconds").GetDouble() > 0);
+        Assert.True(
+            data.GetProperty("tileConstructionDurationMilliseconds").GetDouble() > 0);
+        JsonElement semanticStages =
+            data.GetProperty("semanticStageDurationsMilliseconds");
+        Assert.True(semanticStages.GetProperty("ways").GetDouble() > 0);
+        Assert.True(semanticStages.GetProperty("nodes").GetDouble() > 0);
+        Assert.True(semanticStages.GetProperty("relations").GetDouble() > 0);
+        JsonElement tileStages =
+            data.GetProperty("tileStageDurationsMilliseconds");
+        Assert.True(tileStages.GetProperty("constructEdges").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("build").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("enhance").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("flush").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("hierarchy").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("shortcuts").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("restrictions").GetDouble() > 0);
+        Assert.True(tileStages.GetProperty("validate").GetDouble() > 0);
         Assert.NotEmpty(
             Directory.GetFiles(
                 outputDirectory,

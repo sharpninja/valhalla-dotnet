@@ -21,8 +21,34 @@ public sealed class ManagedValhallaGenerationValidator : IValhallaGenerationVali
         WriteIndented = true,
     };
 
-    public async ValueTask<ValhallaGenerationValidationResult> ValidateAsync(
+    public ValueTask<ValhallaGenerationValidationResult> ValidateAsync(
         ValhallaGenerationStageContext context,
+        CancellationToken cancellationToken) =>
+        ValidateCoreAsync(
+            context,
+            prevalidatedStats: null,
+            cancellationToken);
+
+    /// <summary>
+    /// Publishes an integrity receipt for graph tiles already mutated and structurally validated by
+    /// the managed tile-build pipeline. The graph is still scanned once for tile identities,
+    /// checksums, hashes, and aggregate statistics before publication.
+    /// </summary>
+    public ValueTask<ValhallaGenerationValidationResult> ValidatePrevalidatedAsync(
+        ValhallaGenerationStageContext context,
+        GraphValidator.ValidatorStats validatorStats,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(validatorStats);
+        return ValidateCoreAsync(
+            context,
+            validatorStats,
+            cancellationToken);
+    }
+
+    private static async ValueTask<ValhallaGenerationValidationResult> ValidateCoreAsync(
+        ValhallaGenerationStageContext context,
+        GraphValidator.ValidatorStats? prevalidatedStats,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -36,18 +62,23 @@ public sealed class ManagedValhallaGenerationValidator : IValhallaGenerationVali
 
         try
         {
-            await InspectGraphAsync(
-                    stagingDirectory,
-                    validatorStats: null,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            if (prevalidatedStats is null)
+            {
+                await InspectGraphAsync(
+                        stagingDirectory,
+                        validatorStats: null,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
-            GraphValidator.ValidatorStats validatorStats = await Task.Run(
-                    () => GraphValidator.Validate(
-                        new GraphReader.Config { TileDir = stagingDirectory },
-                        cancellationToken),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            GraphValidator.ValidatorStats validatorStats =
+                prevalidatedStats ??
+                await Task.Run(
+                        () => GraphValidator.Validate(
+                            new GraphReader.Config { TileDir = stagingDirectory },
+                            cancellationToken),
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
             GraphSnapshot snapshot = await InspectGraphAsync(
                     stagingDirectory,

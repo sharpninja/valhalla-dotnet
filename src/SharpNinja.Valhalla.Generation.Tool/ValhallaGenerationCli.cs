@@ -487,7 +487,8 @@ public static partial class ValhallaGenerationCli
                 await ValidateGraphDirectoryAsync(
                         invocation,
                         stagingDirectory,
-                        cancellationToken)
+                        cancellationToken,
+                        result.ValidatorStats)
                     .ConfigureAwait(false);
             if (!validation.IsValid)
             {
@@ -510,6 +511,22 @@ public static partial class ValhallaGenerationCli
                     build.PeakIntermediateMemoryBytes,
                 ["scratchDiskHighWaterMarkBytes"] =
                     build.ScratchDiskHighWaterMarkBytes,
+                ["pbfIngestionDurationMilliseconds"] =
+                    build.PbfIngestionDuration.TotalMilliseconds,
+                ["semanticParsingDurationMilliseconds"] =
+                    build.SemanticParsingDuration.TotalMilliseconds,
+                ["tileConstructionDurationMilliseconds"] =
+                    build.TileConstructionDuration.TotalMilliseconds,
+                ["semanticStageDurationsMilliseconds"] =
+                    build.SemanticStageDurations.ToDictionary(
+                        static pair => pair.Key,
+                        static pair => pair.Value.TotalMilliseconds,
+                        StringComparer.Ordinal),
+                ["tileStageDurationsMilliseconds"] =
+                    result.StageDurations.ToDictionary(
+                        static pair => pair.Key,
+                        static pair => pair.Value.TotalMilliseconds,
+                        StringComparer.Ordinal),
                 ["validationReceiptSha256"] = validation.ReceiptSha256,
             };
         }
@@ -603,7 +620,8 @@ public static partial class ValhallaGenerationCli
         ValidateGraphDirectoryAsync(
             ValhallaGenerationInvocation invocation,
             string graphDirectory,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            GraphValidator.ValidatorStats? prevalidatedStats = null)
     {
         long memoryBudget = GetPositiveInt64(invocation, "memory-budget-bytes");
         long scratchBudget = GetPositiveInt64(invocation, "scratch-budget-bytes");
@@ -636,8 +654,14 @@ public static partial class ValhallaGenerationCli
             graphDirectory,
             resources);
         var validator = new ManagedValhallaGenerationValidator();
-        return await validator.ValidateAsync(context, cancellationToken)
-            .ConfigureAwait(false);
+        return prevalidatedStats is null
+            ? await validator.ValidateAsync(context, cancellationToken)
+                .ConfigureAwait(false)
+            : await validator.ValidatePrevalidatedAsync(
+                    context,
+                    prevalidatedStats,
+                    cancellationToken)
+                .ConfigureAwait(false);
     }
 
     private static Dictionary<string, string[]> LoadConfiguration(

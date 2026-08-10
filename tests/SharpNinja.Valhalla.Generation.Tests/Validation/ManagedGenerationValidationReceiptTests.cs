@@ -124,6 +124,44 @@ public sealed class ManagedGenerationValidationReceiptTests
     }
 
     [Fact]
+    public async Task PrevalidatedGraph_UsesSuppliedValidatorStatistics()
+    {
+        string scratch = NewScratch();
+
+        try
+        {
+            CopyOfficialGraph(scratch);
+            var suppliedStats = new SharpNinja.Valhalla.Mjolnir.GraphValidator.ValidatorStats
+            {
+                TileCount = 4,
+            };
+            suppliedStats.Duplicates[0] = 37;
+            suppliedStats.Densities[0].Add(12.5f);
+
+            ValhallaGenerationValidationResult result =
+                await ValidateAsync(
+                    new ManagedValhallaGenerationValidator(),
+                    scratch,
+                    "prevalidated-monaco",
+                    TestContext.Current.CancellationToken,
+                    suppliedStats);
+
+            Assert.True(result.IsValid);
+            Assert.NotNull(result.Receipt);
+            Assert.Equal(
+                37U,
+                result.Receipt.Statistics.PossibleDuplicateEdgesByLevel[0]);
+            Assert.Equal(
+                12.5D,
+                result.Receipt.Statistics.DensityByLevel[0].Average);
+        }
+        finally
+        {
+            DeleteScratch(scratch);
+        }
+    }
+
+    [Fact]
     public async Task Cancellation_DoesNotPublishReceipt()
     {
         string scratch = NewScratch();
@@ -438,7 +476,8 @@ public sealed class ManagedGenerationValidationReceiptTests
         ManagedValhallaGenerationValidator validator,
         string stagingDirectory,
         string requestIdentity,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SharpNinja.Valhalla.Mjolnir.GraphValidator.ValidatorStats? prevalidatedStats = null)
     {
         using var resources = new ValhallaGenerationResourceBudget(
             256 * 1024 * 1024,
@@ -464,7 +503,12 @@ public sealed class ManagedGenerationValidationReceiptTests
             requestIdentity,
             stagingDirectory,
             resources);
-        return await validator.ValidateAsync(context, cancellationToken);
+        return prevalidatedStats is null
+            ? await validator.ValidateAsync(context, cancellationToken)
+            : await validator.ValidatePrevalidatedAsync(
+                context,
+                prevalidatedStats,
+                cancellationToken);
     }
 
     private static string NewScratch()
