@@ -34,12 +34,34 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
 
 namespace SharpNinja.Valhalla.Mjolnir;
+
+/// <summary>Measured output from one hierarchy build.</summary>
+public sealed class HierarchyBuildResult
+{
+    private readonly Dictionary<string, TimeSpan> stageDurations =
+        new(StringComparer.Ordinal);
+
+    /// <summary>Number of base-node association records.</summary>
+    public int BaseNodeAssociationCount { get; internal set; }
+
+    /// <summary>Number of new hierarchy-node association records.</summary>
+    public int NewNodeAssociationCount { get; internal set; }
+
+    /// <summary>Elapsed wall time for each hierarchy sub-stage.</summary>
+    public IReadOnlyDictionary<string, TimeSpan> StageDurations => stageDurations;
+
+    internal void RecordStageDuration(string stage, TimeSpan duration) =>
+        stageDurations[stage] = duration;
+}
 
 /// <summary>
 /// Divides the road network graph into hierarchy levels. Faithful port of the C++
@@ -74,34 +96,73 @@ public static class HierarchyBuilder
     /// <c>HierarchyBuilder::Build</c>.
     /// </summary>
     /// <param name="config">GraphReader configuration (tile directory + cache knobs).</param>
-    public static void Build(GraphReader.Config config)
+    public static HierarchyBuildResult Build(GraphReader.Config config) =>
+        Build(config, maxDegreeOfParallelism: 1, CancellationToken.None);
+
+    /// <summary>
+    /// Builds hierarchy tiles with bounded tile-local parallelism after the global node association
+    /// indexes are frozen.
+    /// </summary>
+    public static HierarchyBuildResult Build(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxDegreeOfParallelism, 1);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        // Construct GraphReader.
+        // Construct the discovery reader. Tile workers receive independent, bounded readers after
+        // the association indexes are complete and immutable.
         var reader = new GraphReader(config);
+        var result = new HierarchyBuildResult();
+        var stopwatch = Stopwatch.StartNew();
 
         // Association of old nodes to new nodes.
         var newToOld = new List<(GraphId New, GraphId Old)>();
         var oldToNew = new List<OldToNewNodes>();
 
         // Association of old nodes to new nodes (both directions).
-        CreateNodeAssociations(reader, newToOld, oldToNew);
+        CreateNodeAssociations(reader, newToOld, oldToNew, cancellationToken);
+        stopwatch.Stop();
+        result.RecordStageDuration("associations", stopwatch.Elapsed);
+        result.NewNodeAssociationCount = newToOld.Count;
+        result.BaseNodeAssociationCount = oldToNew.Count;
 
         // Sort the sequences and index dense old-node ids by their base tile.
+        cancellationToken.ThrowIfCancellationRequested();
+        stopwatch.Restart();
         SortSequences(newToOld, oldToNew);
         Dictionary<GraphId, int> oldToNewTileOffsets =
             CreateAssociationTileOffsets(oldToNew);
+        stopwatch.Stop();
+        result.RecordStageDuration("sort", stopwatch.Elapsed);
 
         // Iterate through the hierarchy (from highway down to local) and build new tiles.
-        FormTilesInNewLevel(reader, newToOld, oldToNew, oldToNewTileOffsets);
+        cancellationToken.ThrowIfCancellationRequested();
+        reader.Clear();
+        stopwatch.Restart();
+        FormTilesInNewLevel(
+            config,
+            newToOld,
+            oldToNew,
+            oldToNewTileOffsets,
+            maxDegreeOfParallelism,
+            cancellationToken);
+        stopwatch.Stop();
+        result.RecordStageDuration("form-tiles", stopwatch.Elapsed);
 
         // Remove any base tiles that no longer have any data (nodes and edges only exist on arterial
         // and highway levels).
-        RemoveUnusedLocalTiles(reader.TileDir(), oldToNew);
+        cancellationToken.ThrowIfCancellationRequested();
+        stopwatch.Restart();
+        RemoveUnusedLocalTiles(config.TileDir, oldToNew);
+        stopwatch.Stop();
+        result.RecordStageDuration("cleanup", stopwatch.Elapsed);
 
         // The transit-connection update (UpdateTransitConnections) runs only when a transit_dir is
         // configured. Transit is out of scope for the auto/truck graph build, so it is omitted.
+        return result;
     }
 
     // Gets the hierarchy level respecting ramp & ferry-related edges which can be marked with a
@@ -224,7 +285,8 @@ public static class HierarchyBuilder
     private static void CreateNodeAssociations(
         GraphReader reader,
         List<(GraphId New, GraphId Old)> newToOld,
-        List<OldToNewNodes> oldToNew)
+        List<OldToNewNodes> oldToNew,
+        CancellationToken cancellationToken)
     {
         // Map of tiles vs. count of nodes. Used to construct new node Ids.
         var newNodes = new Dictionary<GraphId, uint>();
@@ -254,6 +316,7 @@ public static class HierarchyBuilder
         HashSet<GraphId> localTiles = reader.GetTileSet();
         foreach (GraphId baseTileId in localTiles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // We keep all transit data inside the transit hierarchy.
             if (baseTileId.Level() == TileHierarchy.GetTransitLevel().Level)
             {
@@ -276,6 +339,10 @@ public static class HierarchyBuilder
             PointLL baseLl = tile.Header().BaseLl();
             for (uint i = 0; i < nodecount; i++, basenode = Increment(basenode))
             {
+                if ((i & 1023) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 NodeInfo nodeinfo = tile.Node(basenode);
 
                 // Iterate through the edges to see which levels this node exists.
@@ -335,11 +402,16 @@ public static class HierarchyBuilder
     }
 
     // Form tiles in the new level. Faithful port of FormTilesInNewLevel.
+    // Form tiles in the new level. Global association indexes are frozen before this method runs.
+    // Target tiles are independent, but levels retain an explicit barrier so local tiles are not
+    // replaced while highway or arterial workers still read their base data.
     private static void FormTilesInNewLevel(
-        GraphReader reader,
+        GraphReader.Config config,
         List<(GraphId New, GraphId Old)> newToOld,
         List<OldToNewNodes> oldToNew,
-        IReadOnlyDictionary<GraphId, int> oldToNewTileOffsets)
+        IReadOnlyDictionary<GraphId, int> oldToNewTileOffsets,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         // lambda to indicate whether a directed edge should be included on the current level.
         bool IncludeEdge(DirectedEdge directededge, GraphId baseNode, byte currentLevel)
@@ -381,230 +453,314 @@ public static class HierarchyBuilder
             return GetHierarchyLevel(directededge) == currentLevel;
         }
 
-        // Iterate through the new nodes. They have been sorted by level so highway level is first.
-        reader.Clear();
-        byte currentLevel = byte.MaxValue;
-        GraphId tileId = default;
-        PointLL? baseLl = null;
-        GraphTileBuilder? tilebuilder = null;
-        foreach ((GraphId nodea, GraphId baseNode) in newToOld)
+        void BuildTile(
+            GraphReader reader,
+            (int Start, int End, GraphId TileId) tileRange)
         {
-            // Get the node - check if a new tile.
-            if (nodea.TileBase() != tileId)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            GraphId tileId = tileRange.TileId;
+            byte currentLevel = (byte)tileId.Level();
+            PointLL baseLl = TileHierarchy.GetTiling(currentLevel).Base((int)tileId.Tileid());
+            var tilebuilder = new GraphTileBuilder(tileId);
+            tilebuilder.HeaderBuilder.SetBaseLl(baseLl);
+
+            for (var nodeIndex = tileRange.Start; nodeIndex < tileRange.End; nodeIndex++)
             {
-                // Store the prior tile.
-                tilebuilder?.StoreTileData(reader.TileDir());
-
-                // New tilebuilder for the next tile. Update current level.
-                tileId = nodea.TileBase();
-                tilebuilder = new GraphTileBuilder(tileId);
-                currentLevel = (byte)nodea.Level();
-
-                // Set the base ll for this tile.
-                baseLl = TileHierarchy.GetTiling(currentLevel).Base((int)tileId.Tileid());
-                tilebuilder.HeaderBuilder.SetBaseLl(baseLl);
-
-                // Check if we need to clear the base/local tile cache.
-                if (reader.OverCommitted())
+                if ((nodeIndex & 255) == 0)
                 {
-                    reader.Trim();
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
-            }
 
-            // Get the node in the base level.
-            GraphTile? tile = reader.GetGraphTile(baseNode);
-            if (tile is null)
-            {
-                // LOG_ERROR("Base tile is null? ");
-                continue;
-            }
+                (GraphId nodea, GraphId baseNode) = newToOld[nodeIndex];
 
-            // Copy the data version & checksum.
-            tilebuilder!.HeaderBuilder.SetDatasetId(tile.Header().DatasetId());
-            tilebuilder.HeaderBuilder.SetChecksum(tile.Header().Checksum());
-
-            // Copy node information and set the node lat,lon offsets within the new tile.
-            NodeInfo baseni = tile.Node((int)baseNode.Id());
-            AdminInfo admin = tile.AdminInfo((int)baseni.AdminIndex);
-            NodeInfo node = baseni;
-            // baseLl is set on the first loop iteration (tileId starts at default, so
-            // nodea.TileBase() != tileId is always true the first time through) and on every tile
-            // change thereafter, so it is always non-null by the time it's read here.
-            node.SetLatLng(baseLl!, baseni.LatLng(tile.Header().BaseLl()));
-            node.SetEdgeIndex((uint)tilebuilder.DirectedEdges.Count);
-            node.SetTimezone(baseni.Timezone());
-            node.SetAdminIndex((ushort)tilebuilder.AddAdmin(
-                admin.CountryText, admin.StateText, admin.CountryIso, admin.StateIso));
-
-            // Density at this node.
-            uint density1 = baseni.Density;
-
-            // Current edge count.
-            int edgeCount = tilebuilder.DirectedEdges.Count;
-
-            // Iterate through directed edges of the base node to get the remaining directed edges
-            // (based on classification/importance cutoff).
-            var baseEdgeId = new GraphId(baseNode.Tileid(), baseNode.Level(), baseni.EdgeIndex);
-            for (uint i = 0; i < baseni.EdgeCount; i++, baseEdgeId = Increment(baseEdgeId))
-            {
-                // Check if the directed edge should exist on this level.
-                DirectedEdge directededge = tile.DirectedEdge(baseEdgeId);
-                if (!IncludeEdge(directededge, baseNode, currentLevel))
+                // Get the node in the base level.
+                GraphTile? tile = reader.GetGraphTile(baseNode);
+                if (tile is null)
                 {
                     continue;
                 }
 
-                // Copy the directed edge information.
-                DirectedEdge newedge = directededge;
+                // Copy the data version & checksum.
+                tilebuilder.HeaderBuilder.SetDatasetId(tile.Header().DatasetId());
+                tilebuilder.HeaderBuilder.SetChecksum(tile.Header().Checksum());
 
-                // Set the end node for this edge. Transit connection edges remain connected to the
-                // same node on the transit level. Need to set nodeb for use in AddEdgeInfo.
-                uint density2 = 32;
-                GraphId nodeb;
-                if (directededge.Use == Use.TransitConnection ||
-                    directededge.Use == Use.EgressConnection ||
-                    directededge.Use == Use.PlatformConnection)
+                // Copy node information and set the node lat,lon offsets within the new tile.
+                NodeInfo baseni = tile.Node((int)baseNode.Id());
+                AdminInfo admin = tile.AdminInfo((int)baseni.AdminIndex);
+                NodeInfo node = baseni;
+                node.SetLatLng(baseLl, baseni.LatLng(tile.Header().BaseLl()));
+                node.SetEdgeIndex((uint)tilebuilder.DirectedEdges.Count);
+                node.SetTimezone(baseni.Timezone());
+                node.SetAdminIndex((ushort)tilebuilder.AddAdmin(
+                    admin.CountryText, admin.StateText, admin.CountryIso, admin.StateIso));
+
+                // Density at this node.
+                uint density1 = baseni.Density;
+
+                // Current edge count.
+                int edgeCount = tilebuilder.DirectedEdges.Count;
+
+                // Iterate through directed edges of the base node to get the remaining directed edges
+                // (based on classification/importance cutoff).
+                var baseEdgeId = new GraphId(baseNode.Tileid(), baseNode.Level(), baseni.EdgeIndex);
+                for (uint i = 0; i < baseni.EdgeCount; i++, baseEdgeId = Increment(baseEdgeId))
                 {
-                    nodeb = directededge.EndNode;
-                }
-                else
-                {
-                    OldToNewNodes newNodes = FindNodes(oldToNew, oldToNewTileOffsets, directededge.EndNode);
-                    if (currentLevel == 0)
+                    // Check if the directed edge should exist on this level.
+                    DirectedEdge directededge = tile.DirectedEdge(baseEdgeId);
+                    if (!IncludeEdge(directededge, baseNode, currentLevel))
                     {
-                        nodeb = newNodes.HighwayNode;
+                        continue;
                     }
-                    else if (currentLevel == 1)
+
+                    // Copy the directed edge information.
+                    DirectedEdge newedge = directededge;
+
+                    // Set the end node for this edge. Transit connection edges remain connected to the
+                    // same node on the transit level. Need to set nodeb for use in AddEdgeInfo.
+                    uint density2 = 32;
+                    GraphId nodeb;
+                    if (directededge.Use == Use.TransitConnection ||
+                        directededge.Use == Use.EgressConnection ||
+                        directededge.Use == Use.PlatformConnection)
                     {
-                        nodeb = newNodes.ArterialNode;
+                        nodeb = directededge.EndNode;
                     }
                     else
                     {
-                        nodeb = newNodes.LocalNode;
+                        OldToNewNodes newNodes =
+                            FindNodes(oldToNew, oldToNewTileOffsets, directededge.EndNode);
+                        if (currentLevel == 0)
+                        {
+                            nodeb = newNodes.HighwayNode;
+                        }
+                        else if (currentLevel == 1)
+                        {
+                            nodeb = newNodes.ArterialNode;
+                        }
+                        else
+                        {
+                            nodeb = newNodes.LocalNode;
+                        }
+
+                        density2 = newNodes.Density;
                     }
 
-                    density2 = newNodes.Density;
-                }
+                    newedge.SetEndNode(nodeb);
 
-                // if (!nodeb.IsValid()) LOG_ERROR("Invalid end node - not found in old_to_new map");
-                newedge.SetEndNode(nodeb);
+                    // Set the edge density to the average of the relative density at the end nodes.
+                    uint edgeDensity = (density2 == 32) ? density1 : (density1 + density2) / 2;
+                    newedge.SetDensity(edgeDensity);
 
-                // Set the edge density to the average of the relative density at the end nodes.
-                uint edgeDensity = (density2 == 32) ? density1 : (density1 + density2) / 2;
-                newedge.SetDensity(edgeDensity);
+                    // Set opposing edge indexes to 0 (gets set in graph validator).
+                    newedge.SetOppIndex(0);
 
-                // Set opposing edge indexes to 0 (gets set in graph validator).
-                newedge.SetOppIndex(0);
-
-                // Get signs from the base directed edge.
-                if (directededge.Sign)
-                {
-                    List<SignInfo> signs = tile.GetSigns(baseEdgeId.Id());
-                    // if (signs.size() == 0) LOG_ERROR("Base edge should have signs, but none found");
-                    tilebuilder.AddSigns((uint)tilebuilder.DirectedEdges.Count, signs);
-                }
-
-                // Get turn lanes from the base directed edge.
-                if (directededge.TurnLanes)
-                {
-                    uint offset = tile.TurnLanesOffset(baseEdgeId.Id());
-                    tilebuilder.AddTurnLanes((uint)tilebuilder.DirectedEdges.Count, tile.GetName(offset));
-                }
-
-                // Get access restrictions from the base directed edge. Add these to the list of access
-                // restrictions in the new tile. Update the edge index in the restriction to be the
-                // current directed edge Id.
-                if (directededge.AccessRestriction != 0)
-                {
-                    (IReadOnlyList<AccessRestriction> restrictions, _) = tile.GetAccessRestrictions(baseEdgeId.Id());
-                    foreach (AccessRestriction res in restrictions)
+                    // Get signs from the base directed edge.
+                    if (directededge.Sign)
                     {
-                        tilebuilder.AddAccessRestriction(new AccessRestriction(
-                            (uint)tilebuilder.DirectedEdges.Count, res.Type(), res.Modes(), res.Value(),
-                            res.ExceptDestination()));
+                        List<SignInfo> signs = tile.GetSigns(baseEdgeId.Id());
+                        tilebuilder.AddSigns((uint)tilebuilder.DirectedEdges.Count, signs);
                     }
+
+                    // Get turn lanes from the base directed edge.
+                    if (directededge.TurnLanes)
+                    {
+                        uint offset = tile.TurnLanesOffset(baseEdgeId.Id());
+                        tilebuilder.AddTurnLanes(
+                            (uint)tilebuilder.DirectedEdges.Count,
+                            tile.GetName(offset));
+                    }
+
+                    // Get access restrictions from the base directed edge.
+                    if (directededge.AccessRestriction != 0)
+                    {
+                        (IReadOnlyList<AccessRestriction> restrictions, _) =
+                            tile.GetAccessRestrictions(baseEdgeId.Id());
+                        foreach (AccessRestriction res in restrictions)
+                        {
+                            tilebuilder.AddAccessRestriction(new AccessRestriction(
+                                (uint)tilebuilder.DirectedEdges.Count,
+                                res.Type(),
+                                res.Modes(),
+                                res.Value(),
+                                res.ExceptDestination()));
+                        }
+                    }
+
+                    // Copy lane connectivity.
+                    if (directededge.LaneConnectivity)
+                    {
+                        tilebuilder.CopyLaneConnectivityFromTile(tile, baseEdgeId.Id());
+                    }
+
+                    // Names can be different in the forward and backward direction.
+                    bool diffNames = tilebuilder.OpposingEdgeInfoDiffers(tile, directededge);
+
+                    // Get edge info, shape, and names from the old tile and add to the new.
+                    EdgeInfo edgeinfo = tile.EdgeInfo(directededge);
+                    string encodedShape = edgeinfo.EncodedShape();
+                    uint w = Hash(
+                        encodedShape +
+                        edgeinfo.WayId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    uint edgeInfoOffset = tilebuilder.AddEdgeInfo(
+                        w,
+                        nodea,
+                        nodeb,
+                        edgeinfo.WayId,
+                        edgeinfo.MeanElevation,
+                        edgeinfo.BikeNetwork,
+                        edgeinfo.SpeedLimit,
+                        Encoded.Decode7(encodedShape),
+                        edgeinfo.GetNames(),
+                        edgeinfo.GetTaggedValues(),
+                        edgeinfo.GetLinguisticTaggedValues(),
+                        edgeinfo.GetTypes(),
+                        out _,
+                        diffNames);
+
+                    newedge.SetEdgeInfoOffset(edgeInfoOffset);
+
+                    // reset shortcuts after hijacking them for reclassification.
+                    newedge.SetHierarchyRoadClass(RoadClass.Motorway, true);
+
+                    // Add directed edge.
+                    tilebuilder.DirectedEdges.Add(newedge);
                 }
 
-                // Copy lane connectivity.
-                if (directededge.LaneConnectivity)
+                // Add node transitions.
+                uint index = (uint)tilebuilder.Transitions.Count;
+                OldToNewNodes assoc = FindNodes(oldToNew, oldToNewTileOffsets, baseNode);
+                if (currentLevel == 0)
                 {
-                    tilebuilder.CopyLaneConnectivityFromTile(tile, baseEdgeId.Id());
+                    AddDownwardTransition(assoc.ArterialNode, tilebuilder);
+                    AddDownwardTransition(assoc.LocalNode, tilebuilder);
+                }
+                else if (currentLevel == 1)
+                {
+                    AddUpwardTransition(assoc.HighwayNode, tilebuilder);
+                    AddDownwardTransition(assoc.LocalNode, tilebuilder);
+                }
+                else if (currentLevel == 2)
+                {
+                    AddUpwardTransition(assoc.HighwayNode, tilebuilder);
+                    AddUpwardTransition(assoc.ArterialNode, tilebuilder);
+                }
+                else
+                {
+                    throw new InvalidOperationException("current_level was never set");
                 }
 
-                // Names can be different in the forward and backward direction.
-                bool diffNames = tilebuilder.OpposingEdgeInfoDiffers(tile, directededge);
+                // Set the node transition count and index.
+                uint count = (uint)tilebuilder.Transitions.Count - index;
+                if (count > 0)
+                {
+                    node.SetTransitionCount(count);
+                    node.SetTransitionIndex(index);
+                }
 
-                // Get edge info, shape, and names from the old tile and add to the new. Cannot use the
-                // edge info offset since edges in arterial and highway hierarchy can cross base tiles!
-                // Use a hash based on the encoded shape plus way Id.
-                EdgeInfo edgeinfo = tile.EdgeInfo(directededge);
-                string encodedShape = edgeinfo.EncodedShape();
-                uint w = Hash(encodedShape + edgeinfo.WayId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                uint edgeInfoOffset = tilebuilder.AddEdgeInfo(
-                    w, nodea, nodeb, edgeinfo.WayId, edgeinfo.MeanElevation, edgeinfo.BikeNetwork,
-                    edgeinfo.SpeedLimit, Encoded.Decode7(encodedShape), edgeinfo.GetNames(),
-                    edgeinfo.GetTaggedValues(), edgeinfo.GetLinguisticTaggedValues(), edgeinfo.GetTypes(),
-                    out _, diffNames);
+                // Set the edge count for the new node.
+                node.SetEdgeCount((uint)(tilebuilder.DirectedEdges.Count - edgeCount));
 
-                newedge.SetEdgeInfoOffset(edgeInfoOffset);
+                // Get named signs from the base node.
+                if (baseni.NamedIntersection)
+                {
+                    List<SignInfo> signs = tile.GetSigns(baseNode.Id(), true);
+                    node.SetNamedIntersection(true);
+                    tilebuilder.AddSigns((uint)tilebuilder.Nodes.Count, signs);
+                }
 
-                // reset shortcuts after hijacking them for reclassification.
-                newedge.SetHierarchyRoadClass(RoadClass.Motorway, true);
-
-                // Add directed edge.
-                tilebuilder.DirectedEdges.Add(newedge);
+                tilebuilder.Nodes.Add(node);
             }
 
-            // Add node transitions.
-            uint index = (uint)tilebuilder.Transitions.Count;
-            OldToNewNodes assoc = FindNodes(oldToNew, oldToNewTileOffsets, baseNode);
-            if (currentLevel == 0)
+            cancellationToken.ThrowIfCancellationRequested();
+            tilebuilder.StoreTileData(reader.TileDir());
+            if (reader.OverCommitted())
             {
-                AddDownwardTransition(assoc.ArterialNode, tilebuilder);
-                AddDownwardTransition(assoc.LocalNode, tilebuilder);
+                reader.Trim();
             }
-            else if (currentLevel == 1)
-            {
-                AddUpwardTransition(assoc.HighwayNode, tilebuilder);
-                AddDownwardTransition(assoc.LocalNode, tilebuilder);
-            }
-            else if (currentLevel == 2)
-            {
-                AddUpwardTransition(assoc.HighwayNode, tilebuilder);
-                AddUpwardTransition(assoc.ArterialNode, tilebuilder);
-            }
-            else
-            {
-                throw new InvalidOperationException("current_level was never set");
-            }
-
-            // Set the node transition count and index.
-            uint count = (uint)tilebuilder.Transitions.Count - index;
-            if (count > 0)
-            {
-                node.SetTransitionCount(count);
-                node.SetTransitionIndex(index);
-            }
-
-            // Set the edge count for the new node.
-            node.SetEdgeCount((uint)(tilebuilder.DirectedEdges.Count - edgeCount));
-
-            // Get named signs from the base node.
-            if (baseni.NamedIntersection)
-            {
-                List<SignInfo> signs = tile.GetSigns(baseNode.Id(), true);
-                // if (signs.size() == 0) LOG_ERROR("Base node should have signs, but none found");
-                node.SetNamedIntersection(true);
-                tilebuilder.AddSigns((uint)tilebuilder.Nodes.Count, signs);
-            }
-
-            // The node was mutated locally (C++ mutates nodes().back()); append it now.
-            tilebuilder.Nodes.Add(node);
         }
 
-        // Store the final tile.
-        tilebuilder?.StoreTileData(reader.TileDir());
+        var tileRanges = new List<(int Start, int End, GraphId TileId)>();
+        for (var start = 0; start < newToOld.Count;)
+        {
+            GraphId tileId = newToOld[start].New.TileBase();
+            var end = start + 1;
+            while (end < newToOld.Count && newToOld[end].New.TileBase() == tileId)
+            {
+                end++;
+            }
+
+            tileRanges.Add((start, end, tileId));
+            start = end;
+        }
+
+        GraphReader.Config workerConfig =
+            CreateHierarchyWorkerReaderConfig(config, maxDegreeOfParallelism);
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = maxDegreeOfParallelism,
+            CancellationToken = cancellationToken,
+        };
+
+        // Preserve the upstream level order. In particular, local-level publication cannot begin
+        // until every higher-level worker has finished reading the original local tiles.
+        for (byte level = 0; level < TileHierarchy.Levels().Count; level++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var levelRanges = new List<(int Start, int End, GraphId TileId)>();
+            foreach ((int Start, int End, GraphId TileId) tileRange in tileRanges)
+            {
+                if (tileRange.TileId.Level() == level)
+                {
+                    levelRanges.Add(tileRange);
+                }
+            }
+
+            if (levelRanges.Count == 0)
+            {
+                continue;
+            }
+
+            if (maxDegreeOfParallelism == 1 || levelRanges.Count == 1)
+            {
+                var reader = new GraphReader(workerConfig);
+                foreach ((int Start, int End, GraphId TileId) tileRange in levelRanges)
+                {
+                    BuildTile(reader, tileRange);
+                }
+
+                reader.Clear();
+                continue;
+            }
+
+            Parallel.ForEach(
+                levelRanges,
+                options,
+                () => new GraphReader(workerConfig),
+                (tileRange, _, reader) =>
+                {
+                    BuildTile(reader, tileRange);
+                    return reader;
+                },
+                reader => reader.Clear());
+        }
     }
+
+    private static GraphReader.Config CreateHierarchyWorkerReaderConfig(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism) =>
+        new()
+        {
+            TileDir = config.TileDir,
+            MaxCacheSize = Math.Max(1, config.MaxCacheSize / maxDegreeOfParallelism),
+            UseLruMemCache = config.UseLruMemCache,
+            LruMemCacheHardControl = config.LruMemCacheHardControl,
+            UseSimpleMemCache = config.UseSimpleMemCache,
+            GlobalSynchronizedCache = config.GlobalSynchronizedCache,
+            MaxConcurrentReaderUsers = 1,
+            TrafficSnapshot = config.TrafficSnapshot,
+        };
+
 
     // Remove any base tiles that no longer have any data (nodes and edges only exist on arterial and
     // highway levels). Faithful port of RemoveUnusedLocalTiles.

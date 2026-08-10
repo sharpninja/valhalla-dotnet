@@ -141,6 +141,88 @@ public class HierarchyBuilderTests
         }
     }
 
+    [Fact]
+    public void Build_ReturnsMeasuredSubstageReceipts()
+    {
+        string tileDir = MakeTempTileDir();
+        try
+        {
+            WriteLocalTiles(tileDir, RoadClass.Primary);
+
+            HierarchyBuildResult result =
+                HierarchyBuilder.Build(new GraphReader.Config { TileDir = tileDir });
+
+            Assert.True(result.BaseNodeAssociationCount > 0);
+            Assert.True(result.NewNodeAssociationCount >= result.BaseNodeAssociationCount);
+            Assert.Equal(
+                new[] { "associations", "sort", "form-tiles", "cleanup" },
+                result.StageDurations.Keys);
+            Assert.All(result.StageDurations.Values, duration => Assert.True(duration >= TimeSpan.Zero));
+        }
+        finally
+        {
+            Cleanup(tileDir);
+        }
+    }
+
+    [Fact]
+    public void Build_ParallelOutputMatchesSequentialOutput()
+    {
+        string sequentialDir = MakeTempTileDir();
+        string parallelDir = MakeTempTileDir();
+        try
+        {
+            WriteLocalTiles(sequentialDir, RoadClass.Primary);
+            WriteLocalTiles(parallelDir, RoadClass.Primary);
+
+            HierarchyBuilder.Build(new GraphReader.Config { TileDir = sequentialDir });
+            HierarchyBuilder.Build(
+                new GraphReader.Config { TileDir = parallelDir },
+                maxDegreeOfParallelism: 4,
+                TestContext.Current.CancellationToken);
+
+            string[] sequentialFiles = Directory.GetFiles(sequentialDir, "*.gph", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(sequentialDir, path))
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+            string[] parallelFiles = Directory.GetFiles(parallelDir, "*.gph", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(parallelDir, path))
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Equal(sequentialFiles, parallelFiles);
+            foreach (string relativePath in sequentialFiles)
+            {
+                Assert.Equal(
+                    File.ReadAllBytes(Path.Combine(sequentialDir, relativePath)),
+                    File.ReadAllBytes(Path.Combine(parallelDir, relativePath)));
+            }
+        }
+        finally
+        {
+            Cleanup(sequentialDir);
+            Cleanup(parallelDir);
+        }
+    }
+
+    [Fact]
+    public void Build_RejectsInvalidParallelism()
+    {
+        string tileDir = MakeTempTileDir();
+        try
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => HierarchyBuilder.Build(
+                    new GraphReader.Config { TileDir = tileDir },
+                    maxDegreeOfParallelism: 0,
+                    TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Cleanup(tileDir);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Fixture: build a local (level 2) tile set on disk
     // ------------------------------------------------------------------

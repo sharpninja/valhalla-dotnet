@@ -369,9 +369,18 @@ public static class TileBuilder
         if (config.Hierarchy)
         {
             stageStopwatch.Restart();
-            HierarchyBuilder.Build(MakeReaderConfig(tileDir, config));
+            HierarchyBuildResult hierarchyResult =
+                HierarchyBuilder.Build(
+                    MakeReaderConfig(tileDir, config),
+                    config.MaxDegreeOfParallelism,
+                    cancellationToken);
             stageStopwatch.Stop();
             result.RecordStageDuration("hierarchy", stageStopwatch.Elapsed);
+            foreach ((string hierarchyStage, TimeSpan duration) in hierarchyResult.StageDurations)
+            {
+                result.RecordStageDuration($"hierarchy.{hierarchyStage}", duration);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
 
             if (config.Shortcuts)
