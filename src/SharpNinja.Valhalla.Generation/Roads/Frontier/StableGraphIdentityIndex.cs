@@ -75,6 +75,41 @@ internal sealed class StableGraphIdentityIndex : IDisposable
         return identities.Read(ordinal);
     }
 
+    internal bool TryGetIdentity(
+        GraphId graphId,
+        out StableGraphNodeIdentity identity)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        long low = 0;
+        long high = identities.State.RecordCount;
+        while (low < high)
+        {
+            long middle = low + ((high - low) / 2);
+            StableGraphNodeIdentity candidate = identities.Read(middle);
+            if (candidate.GraphId < graphId)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        if (low < identities.State.RecordCount)
+        {
+            StableGraphNodeIdentity candidate = identities.Read(low);
+            if (candidate.GraphId == graphId)
+            {
+                identity = candidate;
+                return true;
+            }
+        }
+
+        identity = default;
+        return false;
+    }
+
     internal bool TryGetGraphId(
         long osmNodeId,
         long canonicalOrdinal,

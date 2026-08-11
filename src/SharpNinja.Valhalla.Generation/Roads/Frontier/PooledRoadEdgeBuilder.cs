@@ -81,6 +81,22 @@ internal sealed class PooledRoadEdgeBuildResult : IDisposable
         return nodeIndex.TryGetNode(osmNodeId, out node);
     }
 
+    internal bool TryGetCanonicalNode(
+        GraphId graphId,
+        out GenerationNodeRecord node)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (graphIdentities.TryGetIdentity(
+                graphId,
+                out StableGraphNodeIdentity identity))
+        {
+            return nodeIndex.TryGetNode(identity.OsmNodeId, out node);
+        }
+
+        node = default;
+        return false;
+    }
+
     internal bool TryGetGraphNode(
         GraphId nodeId,
         out GenerationGraphNodeRecord graphNode)
@@ -388,6 +404,9 @@ internal static class PooledRoadEdgeBuilder
         }
 
         NodeSemanticFlags semanticAnchorFlags =
+            NodeSemanticFlags.TrafficSignal |
+            NodeSemanticFlags.StopSign |
+            NodeSemanticFlags.YieldSign |
             NodeSemanticFlags.Barrier |
             NodeSemanticFlags.Gate |
             NodeSemanticFlags.AccessTransition;

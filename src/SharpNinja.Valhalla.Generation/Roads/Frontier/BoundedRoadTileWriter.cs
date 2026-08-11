@@ -177,7 +177,16 @@ internal static class BoundedRoadTileWriter
                     out _);
 
                 DirectedEdge directedEdge = DirectedEdge.Create();
-                directedEdge.SetEndNode(forward ? edge.TargetNode : edge.SourceNode);
+                GraphId endNodeId = forward ? edge.TargetNode : edge.SourceNode;
+                if (!graph.TryGetCanonicalNode(
+                        endNodeId,
+                        out GenerationNodeRecord endNode))
+                {
+                    throw new InvalidDataException(
+                        $"Directed edge {edge.EdgeRecordId} has no canonical end node.");
+                }
+
+                directedEdge.SetEndNode(endNodeId);
                 directedEdge.SetForward(forward);
                 directedEdge.SetLeavesTile(
                     directedEdge.EndNode.TileBase() != tileBase);
@@ -202,7 +211,11 @@ internal static class BoundedRoadTileWriter
                 directedEdge.SetNotThru(
                     (edge.Flags & EdgeSemanticFlags.NoThruTraffic) != 0);
                 directedEdge.SetTrafficSignal(
-                    (edge.Flags & EdgeSemanticFlags.HasTrafficControl) != 0);
+                    (endNode.Flags & NodeSemanticFlags.TrafficSignal) != 0);
+                directedEdge.SetStopSign(
+                    (endNode.Flags & NodeSemanticFlags.StopSign) != 0);
+                directedEdge.SetYieldSign(
+                    (endNode.Flags & NodeSemanticFlags.YieldSign) != 0);
                 builder.DirectedEdges.Add(directedEdge);
             }
 
