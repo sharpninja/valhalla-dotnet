@@ -1,4 +1,5 @@
 using SharpNinja.Valhalla.Baldr;
+using SharpNinja.Valhalla.Midgard;
 
 namespace SharpNinja.Valhalla.Generation.Roads.Frontier;
 
@@ -74,6 +75,42 @@ internal readonly record struct GenerationNodeRecord(
     int LongitudeE7,
     NodeSemanticFlags Flags,
     long TagReference);
+
+internal readonly record struct GenerationGraphNodeCandidate(
+    GenerationNodeRecord Node,
+    GraphId TileBase,
+    uint GridId,
+    long CanonicalOrdinal)
+{
+    internal static GenerationGraphNodeCandidate Create(
+        GenerationNodeRecord node,
+        byte level,
+        uint gridId,
+        long canonicalOrdinal)
+    {
+        PointLL point = PointLL.Create(
+            node.LongitudeE7 / 10_000_000d,
+            node.LatitudeE7 / 10_000_000d);
+        GraphId tileBase = TileHierarchy.GetGraphId(point, level);
+        if (!tileBase.IsValid())
+        {
+            throw new InvalidDataException(
+                $"OSM node {node.OsmNodeId} is outside the level {level} tiling.");
+        }
+
+        return new GenerationGraphNodeCandidate(
+            node,
+            tileBase.TileBase(),
+            gridId,
+            canonicalOrdinal);
+    }
+}
+
+internal readonly record struct StableGraphNodeIdentity(
+    long OsmNodeId,
+    long CanonicalOrdinal,
+    GraphId GraphId,
+    uint GridId);
 
 internal readonly record struct NodeIncidenceRecord(
     long OsmNodeId,
