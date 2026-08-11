@@ -110,6 +110,40 @@ internal sealed class StableGraphIdentityIndex : IDisposable
         return false;
     }
 
+    internal bool TryGetGraphId(long osmNodeId, out GraphId graphId)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        long low = 0;
+        long high = lookup.Output.State.RecordCount;
+        while (low < high)
+        {
+            long middle = low + ((high - low) / 2);
+            StableGraphNodeIdentity candidate = lookup.Output.Read(middle);
+            if (candidate.OsmNodeId < osmNodeId)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        if (low < lookup.Output.State.RecordCount)
+        {
+            StableGraphNodeIdentity candidate = lookup.Output.Read(low);
+            if (candidate.OsmNodeId == osmNodeId)
+            {
+                graphId = candidate.GraphId;
+                return true;
+            }
+        }
+
+        graphId = GraphId.Invalid;
+        return false;
+    }
+
+
     internal bool TryGetGraphId(
         long osmNodeId,
         long canonicalOrdinal,

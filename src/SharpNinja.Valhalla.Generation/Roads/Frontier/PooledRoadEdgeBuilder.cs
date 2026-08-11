@@ -73,6 +73,13 @@ internal sealed class PooledRoadEdgeBuildResult : IDisposable
         return graphIdentities.ReadIdentity(ordinal);
     }
 
+    internal bool TryGetGraphId(long osmNodeId, out GraphId graphId)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return graphIdentities.TryGetGraphId(osmNodeId, out graphId);
+    }
+
+
     internal bool TryGetCanonicalNode(
         long osmNodeId,
         out GenerationNodeRecord node)

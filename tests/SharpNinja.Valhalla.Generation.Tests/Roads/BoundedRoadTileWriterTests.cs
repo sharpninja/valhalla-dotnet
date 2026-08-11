@@ -178,6 +178,66 @@ public sealed class BoundedRoadTileWriterTests
             Directory.Delete(root, recursive: true);
         }
     }
+    [Fact]
+    public async Task WriteAsync_SimpleRestrictionUsesDurableViaAndLocalEdgeMask()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new SimpleRestrictionRoadSource(),
+                    SemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using PooledRoadEdgeBuildResult graph =
+                await PooledRoadEdgeBuilder.BuildAsync(
+                    semanticStore,
+                    BuilderOptions(Path.Combine(root, "pooled")),
+                    TestContext.Current.CancellationToken);
+            string output = Path.Combine(root, "tiles");
+
+            await BoundedRoadTileWriter.WriteAsync(
+                semanticStore,
+                graph,
+                new BoundedRoadTileWriterOptions(
+                    output,
+                    MemoryBudgetBytes: 8 * 1024 * 1024,
+                    MaxDegreeOfParallelism: 1),
+                TestContext.Current.CancellationToken);
+
+            string tilePath = Assert.Single(
+                Directory.EnumerateFiles(output, "*.gph", SearchOption.AllDirectories));
+            GraphTile? tile = GraphTile.Create(output, GraphTile.GetTileId(tilePath));
+            Assert.NotNull(tile);
+            GraphId inboundNodeId = FindGraphId(graph, 1);
+            GraphId viaNodeId = FindGraphId(graph, 2);
+            GraphId restrictedExitId = FindGraphId(graph, 3);
+
+            NodeInfo inboundNode = tile.Node(checked((int)inboundNodeId.Id()));
+            DirectedEdge incoming = Enumerable
+                .Range(0, checked((int)inboundNode.EdgeCount))
+                .Select(localIndex =>
+                    tile.DirectedEdge(
+                        checked((int)(inboundNode.EdgeIndex + (uint)localIndex))))
+                .Single(edge => edge.EndNode == viaNodeId);
+
+            NodeInfo viaNode = tile.Node(checked((int)viaNodeId.Id()));
+            int restrictedLocalIndex = Enumerable
+                .Range(0, checked((int)viaNode.EdgeCount))
+                .Single(localIndex =>
+                    tile.DirectedEdge(
+                        checked((int)(viaNode.EdgeIndex + (uint)localIndex)))
+                    .EndNode == restrictedExitId);
+
+            Assert.Equal(1U << restrictedLocalIndex, incoming.Restrictions);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+
 
     [Fact]
     public async Task WriteAsync_InsufficientMemoryBudgetCannotPublishTile()
@@ -266,6 +326,66 @@ public sealed class BoundedRoadTileWriterTests
         Directory.CreateDirectory(root);
         return root;
     }
+
+    private sealed class SimpleRestrictionRoadSource : IOsmPbfEntitySource
+    {
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pass == OsmPbfEntityPass.Ways)
+            {
+                visitor.Way(10, [1UL, 2UL], RoadTags("Inbound"));
+                visitor.Way(12, [2UL, 3UL], RoadTags("Restricted Exit"));
+                visitor.Way(13, [2UL, 4UL], RoadTags("Allowed Exit"));
+                return;
+            }
+
+            if (pass == OsmPbfEntityPass.Relations)
+            {
+                visitor.Relation(
+                    20,
+                    [
+                        new OsmRelationMember(10, OsmMemberType.Way, "from"),
+                        new OsmRelationMember(2, OsmMemberType.Node, "via"),
+                        new OsmRelationMember(12, OsmMemberType.Way, "to"),
+                    ],
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["type"] = "restriction",
+                        ["restriction"] = "no_left_turn",
+                    });
+                return;
+            }
+
+            if (pass != OsmPbfEntityPass.Nodes)
+            {
+                return;
+            }
+
+            visitor.Node(1, 36.1000, -86.7020, EmptyTags());
+            visitor.Node(2, 36.1000, -86.7000, EmptyTags());
+            visitor.Node(3, 36.1020, -86.7000, EmptyTags());
+            visitor.Node(4, 36.1000, -86.6980, EmptyTags());
+        }
+
+        private static IReadOnlyDictionary<string, string> RoadTags(string name) =>
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["highway"] = "primary",
+                ["name"] = name,
+            };
+
+        private static IReadOnlyDictionary<string, string> EmptyTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
 
     private sealed class CrossTileRoadSource : IOsmPbfEntitySource
     {

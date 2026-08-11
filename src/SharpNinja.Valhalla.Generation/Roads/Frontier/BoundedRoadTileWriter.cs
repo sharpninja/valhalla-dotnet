@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 
+using SharpNinja.Valhalla.Generation.Storage;
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
 using SharpNinja.Valhalla.Mjolnir;
@@ -20,7 +21,7 @@ internal static class BoundedRoadTileWriter
 {
     private const uint DefaultSpeedKph = 50;
 
-    internal static ValueTask<BoundedRoadTileWriteReceipt> WriteAsync(
+    internal static async ValueTask<BoundedRoadTileWriteReceipt> WriteAsync(
         CompactOsmSemanticStore semanticStore,
         PooledRoadEdgeBuildResult graph,
         BoundedRoadTileWriterOptions options,
@@ -32,61 +33,111 @@ internal static class BoundedRoadTileWriter
         ValidateOptions(options);
         cancellationToken.ThrowIfCancellationRequested();
 
-        Directory.CreateDirectory(options.OutputDirectory);
-        int tileCount = 0;
-        long peakWorkerMemoryBytes = 0;
-        long identityOrdinal = 0;
-        while (identityOrdinal < graph.IdentityCount)
+        string fullOutputDirectory = Path.GetFullPath(options.OutputDirectory);
+        string parentDirectory = Path.GetDirectoryName(fullOutputDirectory) ??
+            throw new InvalidOperationException(
+                "The tile output directory must have a parent directory.");
+        string restrictionWorkDirectory = Path.Combine(
+            parentDirectory,
+            $".{Path.GetFileName(fullOutputDirectory)}-restriction-index-{Guid.NewGuid():N}");
+        long tileMemoryBudgetBytes = options.MemoryBudgetBytes;
+        SimpleRestrictionMaskIndex? restrictionIndex = null;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            StableGraphNodeIdentity first = graph.ReadIdentity(identityOrdinal);
-            GraphId tileBase = first.GraphId.TileBase();
-            long tileEnd = identityOrdinal + 1;
-            while (tileEnd < graph.IdentityCount &&
-                   graph.ReadIdentity(tileEnd).GraphId.TileBase() == tileBase)
+            if (semanticStore.RestrictionCount > 0)
             {
-                tileEnd++;
+                if (options.MemoryBudgetBytes < 8)
+                {
+                    throw new ValhallaGenerationResourceLimitException(
+                        "The tile writer memory budget cannot fit a bounded restriction index.");
+                }
+
+                long indexMemoryBudgetBytes = Math.Max(
+                    4,
+                    options.MemoryBudgetBytes / 4);
+                tileMemoryBudgetBytes = checked(
+                    options.MemoryBudgetBytes - indexMemoryBudgetBytes);
+                long indexScratchBudgetBytes =
+                    indexMemoryBudgetBytes > long.MaxValue / 4
+                        ? long.MaxValue
+                        : indexMemoryBudgetBytes * 4;
+                restrictionIndex = await SimpleRestrictionMaskIndex.BuildAsync(
+                        semanticStore,
+                        graph,
+                        new SimpleRestrictionMaskIndexOptions(
+                            restrictionWorkDirectory,
+                            IntermediateStorageMode.Auto,
+                            indexMemoryBudgetBytes,
+                            indexScratchBudgetBytes),
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
-            long estimatedBytes = EstimateTileWorkingSet(
-                semanticStore,
-                graph,
-                identityOrdinal,
-                tileEnd,
-                cancellationToken);
-            if (estimatedBytes > options.MemoryBudgetBytes / 2)
+            Directory.CreateDirectory(fullOutputDirectory);
+            int tileCount = 0;
+            long peakWorkerMemoryBytes = 0;
+            long identityOrdinal = 0;
+            while (identityOrdinal < graph.IdentityCount)
             {
-                throw new ValhallaGenerationResourceLimitException(
-                    $"Tile {tileBase} requires an estimated {estimatedBytes} bytes " +
-                    "before its final serialization buffer, which cannot fit within " +
-                    $"the {options.MemoryBudgetBytes}-byte worker budget.");
+                cancellationToken.ThrowIfCancellationRequested();
+                StableGraphNodeIdentity first = graph.ReadIdentity(identityOrdinal);
+                GraphId tileBase = first.GraphId.TileBase();
+                long tileEnd = identityOrdinal + 1;
+                while (tileEnd < graph.IdentityCount &&
+                       graph.ReadIdentity(tileEnd).GraphId.TileBase() == tileBase)
+                {
+                    tileEnd++;
+                }
+
+                long estimatedBytes = EstimateTileWorkingSet(
+                    semanticStore,
+                    graph,
+                    identityOrdinal,
+                    tileEnd,
+                    cancellationToken);
+                if (estimatedBytes > tileMemoryBudgetBytes / 2)
+                {
+                    throw new ValhallaGenerationResourceLimitException(
+                        $"Tile {tileBase} requires an estimated {estimatedBytes} bytes " +
+                        "before its final serialization buffer, which cannot fit within " +
+                        $"the {tileMemoryBudgetBytes}-byte worker budget.");
+                }
+
+                long tilePeak = WriteTile(
+                    semanticStore,
+                    graph,
+                    restrictionIndex,
+                    identityOrdinal,
+                    tileEnd,
+                    tileBase,
+                    fullOutputDirectory,
+                    estimatedBytes,
+                    tileMemoryBudgetBytes,
+                    cancellationToken);
+                peakWorkerMemoryBytes = Math.Max(peakWorkerMemoryBytes, tilePeak);
+                tileCount++;
+                identityOrdinal = tileEnd;
             }
 
-            long tilePeak = WriteTile(
-                semanticStore,
-                graph,
-                identityOrdinal,
-                tileEnd,
-                tileBase,
-                options.OutputDirectory,
-                estimatedBytes,
-                options.MemoryBudgetBytes,
-                cancellationToken);
-            peakWorkerMemoryBytes = Math.Max(peakWorkerMemoryBytes, tilePeak);
-            tileCount++;
-            identityOrdinal = tileEnd;
-        }
-
-        return ValueTask.FromResult(
-            new BoundedRoadTileWriteReceipt(
+            return new BoundedRoadTileWriteReceipt(
                 tileCount,
                 tileCount == 0 ? 0 : 1,
-                peakWorkerMemoryBytes));
+                peakWorkerMemoryBytes);
+        }
+        finally
+        {
+            restrictionIndex?.Dispose();
+            if (Directory.Exists(restrictionWorkDirectory))
+            {
+                Directory.Delete(restrictionWorkDirectory, recursive: true);
+            }
+        }
     }
 
     private static long WriteTile(
         CompactOsmSemanticStore semanticStore,
         PooledRoadEdgeBuildResult graph,
+        SimpleRestrictionMaskIndex? restrictionIndex,
         long startIdentityOrdinal,
         long endIdentityOrdinal,
         GraphId tileBase,
@@ -216,6 +267,16 @@ internal static class BoundedRoadTileWriter
                     (endNode.Flags & NodeSemanticFlags.StopSign) != 0);
                 directedEdge.SetYieldSign(
                     (endNode.Flags & NodeSemanticFlags.YieldSign) != 0);
+                if (restrictionIndex is not null &&
+                    restrictionIndex.TryGetMask(
+                        identity.GraphId,
+                        edge.EdgeRecordId,
+                        forward,
+                        out uint restrictionMask))
+                {
+                    directedEdge.SetRestrictions(restrictionMask);
+                }
+
                 builder.DirectedEdges.Add(directedEdge);
             }
 
