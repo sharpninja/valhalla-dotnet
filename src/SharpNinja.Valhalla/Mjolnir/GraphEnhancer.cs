@@ -95,6 +95,9 @@ public sealed class GraphEnhancer
         /// <summary>Number of pairwise street-name consistency checks.</summary>
         public ulong NameConsistencyCheckCount { get; set; }
 
+        /// <summary>Number of edge-name payloads decoded during enhancement.</summary>
+        public ulong StreetNameDecodeCount { get; set; }
+
         /// <summary>Number of internal-intersection inference checks.</summary>
         public ulong InternalIntersectionCheckCount { get; set; }
 
@@ -142,6 +145,10 @@ public sealed class GraphEnhancer
     }
 
     private readonly EnhancerStats _stats = new();
+    private readonly StreetNames[] _transitionStreetNames =
+        new StreetNames[checked((int)GraphConstants.NumberOfEdgeTransitions)];
+    private readonly bool[] _transitionHasNames =
+        new bool[checked((int)GraphConstants.NumberOfEdgeTransitions)];
     private NotThruSearchScratch? _notThruSearchScratch;
 
     private sealed class NotThruSearchScratch
@@ -278,6 +285,7 @@ public sealed class GraphEnhancer
             _stats.NotThru += statistics.NotThru;
             _stats.SecondPassEdgeCount += statistics.SecondPassEdgeCount;
             _stats.NameConsistencyCheckCount += statistics.NameConsistencyCheckCount;
+            _stats.StreetNameDecodeCount += statistics.StreetNameDecodeCount;
             _stats.InternalIntersectionCheckCount += statistics.InternalIntersectionCheckCount;
             _stats.StopYieldCheckCount += statistics.StopYieldCheckCount;
             _stats.TurnLaneCheckCount += statistics.TurnLaneCheckCount;
@@ -325,6 +333,8 @@ public sealed class GraphEnhancer
     /// </summary>
     private interface ITileSource
     {
+        TileModel? CreateMutableTile(GraphId tileId);
+
         TileModel? GetTile(GraphId tileId);
     }
 
@@ -336,6 +346,14 @@ public sealed class GraphEnhancer
         private readonly Dictionary<ulong, TileModel?> _cache = new();
 
         public InMemoryTileSource(IDictionary<GraphId, byte[]> blobs) => _blobs = blobs;
+
+        public TileModel? CreateMutableTile(GraphId tileId)
+        {
+            GraphId @base = tileId.TileBase();
+            return _blobs.TryGetValue(@base, out byte[]? blob)
+                ? new TileModel(@base, blob)
+                : null;
+        }
 
         public TileModel? GetTile(GraphId tileId)
         {
@@ -364,7 +382,7 @@ public sealed class GraphEnhancer
     {
         cancellationToken.ThrowIfCancellationRequested();
         long stageStart = Stopwatch.GetTimestamp();
-        TileModel? tileOpt = reader.GetTile(tileId);
+        TileModel? tileOpt = reader.CreateMutableTile(tileId);
         _stats.AddStageDuration(
             "deserialize",
             Stopwatch.GetElapsedTime(stageStart));
@@ -516,13 +534,16 @@ public sealed class GraphEnhancer
             uint edgeIndex = nodeinfo.EdgeIndex;
             uint edgeCount = nodeinfo.EdgeCount;
             uint ntrans = nodeinfo.LocalEdgeCount;
-            var transitionStreetNames = new StreetNames[checked((int)ntrans)];
+            StreetNames[] transitionStreetNames = _transitionStreetNames;
             for (uint k = 0; k < ntrans; k++)
             {
                 DirectedEdge transitionEdge = tile.DirectedEdgeRef((int)(edgeIndex + k));
-                transitionStreetNames[(int)k] = StreetNamesFactory.Create(
-                    countryCode,
-                    tile.EdgeInfoFor(transitionEdge).GetNames(false));
+                _stats.StreetNameDecodeCount++;
+                List<(string Name, bool IsRouteNum)> transitionNames =
+                    tile.EdgeInfoFor(transitionEdge).GetNames(false);
+                _transitionHasNames[(int)k] = transitionNames.Count > 0;
+                transitionStreetNames[(int)k] =
+                    StreetNamesFactory.Create(countryCode, transitionNames);
             }
 
             uint drivableCount = 0;
@@ -563,18 +584,27 @@ public sealed class GraphEnhancer
                     directededge.SetTrafficSignal(false);
                 }
 
-                // Update the named flag.
-                EdgeInfo eOffset = tile.EdgeInfoFor(directededge);
-                List<(string Name, bool IsRouteNum)> names = eOffset.GetNames(false);
-                directededge.SetNamed(names.Count > 0);
+                // Update the named flag and reuse the transition name set already decoded for
+                // every local edge. Non-local edges decode their names once on demand.
+                StreetNames streetNames;
+                if (j < ntrans)
+                {
+                    streetNames = transitionStreetNames[(int)j];
+                    directededge.SetNamed(_transitionHasNames[(int)j]);
+                }
+                else
+                {
+                    EdgeInfo edgeInfo = tile.EdgeInfoFor(directededge);
+                    _stats.StreetNameDecodeCount++;
+                    List<(string Name, bool IsRouteNum)> names = edgeInfo.GetNames(false);
+                    directededge.SetNamed(names.Count > 0);
+                    streetNames = StreetNamesFactory.Create(countryCode, names);
+                }
 
                 // Speed assignment (heuristic path).
                 UpdateSpeed(ref directededge, density, inferTurnChannels);
 
                 // Name continuity - on the directed edge.
-                StreetNames streetNames = j < ntrans
-                    ? transitionStreetNames[(int)j]
-                    : StreetNamesFactory.Create(countryCode, names);
                 for (uint k = 0; k < ntrans; k++)
                 {
                     _stats.NameConsistencyCheckCount++;
@@ -1380,9 +1410,10 @@ public sealed class GraphEnhancer
         }
 
         // Get the tile at the end node.
-        TileModel tile = directededge.EndNode.TileBase() == startTile.Id
-            ? startTile
-            : reader.GetTile(directededge.EndNode)!;
+        // Stop/yield flags are temporary GraphBuilder input. Always inspect the frozen source
+        // snapshot, including for an end node in this same tile, so node traversal order and
+        // parallel worker assignment cannot observe an already-cleared transition index.
+        TileModel tile = reader.GetTile(directededge.EndNode)!;
         NodeInfo nodeinfo = tile.NodeRef((int)directededge.EndNode.Id());
         if (nodeinfo.TransitionIndex != 0)
         {

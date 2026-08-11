@@ -65,6 +65,7 @@ public class GraphEnhancerTests
         GraphEnhancer.EnhancerStats stats = enhancer.Stats;
         Assert.True(stats.SecondPassEdgeCount > 0);
         Assert.True(stats.NameConsistencyCheckCount >= stats.SecondPassEdgeCount);
+        Assert.Equal(stats.SecondPassEdgeCount, stats.StreetNameDecodeCount);
         Assert.Equal(stats.SecondPassEdgeCount, stats.InternalIntersectionCheckCount);
         Assert.Equal(stats.SecondPassEdgeCount, stats.StopYieldCheckCount);
         Assert.True(stats.TurnLaneCheckCount <= stats.SecondPassEdgeCount);
@@ -335,6 +336,38 @@ public class GraphEnhancerTests
     }
 
     [Fact]
+    public void Enhance_SetsNamedFlag_ForRouteReferenceOnlyEdge()
+    {
+        var osmdata = new OSMData();
+        uint routeReferenceIndex = osmdata.NameOffsetMap.Index("US 70S");
+
+        BuildSyntheticInput(out List<OSMWay> ways, out List<OSMWayNode> wayNodes);
+        ways[0].RefIndex = routeReferenceIndex;
+
+        GraphBuilder.Graph graph = GraphBuilder.BuildEdges(ways, wayNodes);
+        Dictionary<GraphId, byte[]> tiles = GraphBuilder.Build(osmdata, ways, wayNodes, graph);
+        Dictionary<GraphId, byte[]> enhanced = new GraphEnhancer().Enhance(tiles);
+
+        bool foundRouteReference = false;
+        foreach (KeyValuePair<GraphId, byte[]> kv in enhanced)
+        {
+            GraphTile tile = GraphTile.Create(kv.Key, kv.Value);
+            for (int edgeIndex = 0; edgeIndex < tile.DirectedEdgeCount(); edgeIndex++)
+            {
+                DirectedEdge edge = tile.DirectedEdge(edgeIndex);
+                List<(string Name, bool IsRouteNum)> names = tile.EdgeInfo(edge).GetNames(false);
+                if (names.Any(static name => name.IsRouteNum && name.Name == "US 70S"))
+                {
+                    Assert.True(edge.Named, "An edge carrying only a route reference must remain named.");
+                    foundRouteReference = true;
+                }
+            }
+        }
+
+        Assert.True(foundRouteReference, "Expected the US 70S route-reference edge to be present.");
+    }
+
+    [Fact]
     public void Enhance_IsIdempotentOnStructuralCounts()
     {
         // Enhancing already-enhanced tiles must not change node / edge / sign / admin counts
@@ -357,6 +390,60 @@ public class GraphEnhancerTests
             Assert.Equal(a.Header().Admincount(), b.Header().Admincount());
             Assert.Equal(a.Header().AccessRestrictionCount(), b.Header().AccessRestrictionCount());
             Assert.Equal(a.Header().TurnlaneCount(), b.Header().TurnlaneCount());
+        }
+    }
+
+    [Fact]
+    public void Enhance_CrossTileControlState_UsesFrozenInputSnapshotAcrossParallelism()
+    {
+        var osmdata = new OSMData();
+        OSMNode stopNode = MakeNode(101, -76.501, 40.270, intersection: true);
+        stopNode.SetStopSign(true);
+        OSMNode sourceNode = MakeNode(102, -76.499, 40.270, intersection: true);
+
+        OSMWay way = MakeWay(1001);
+        way.SetNodeCount(2);
+        var ways = new List<OSMWay> { way };
+        var wayNodes = new List<OSMWayNode>
+        {
+            MakeWayNode(stopNode, 0, 0),
+            MakeWayNode(sourceNode, 0, 1),
+        };
+
+        GraphBuilder.Graph graph = GraphBuilder.BuildEdges(ways, wayNodes);
+        GraphId stopGraphId = graph.Nodes.Single(node => node.OsmNode.Osmid == stopNode.Osmid).GraphId;
+        GraphId sourceGraphId = graph.Nodes.Single(node => node.OsmNode.Osmid == sourceNode.Osmid).GraphId;
+        Assert.NotEqual(stopGraphId.TileBase(), sourceGraphId.TileBase());
+        Assert.True(stopGraphId.TileBase().Value < sourceGraphId.TileBase().Value);
+
+        Dictionary<GraphId, byte[]> tiles = GraphBuilder.Build(osmdata, ways, wayNodes, graph);
+        Dictionary<GraphId, byte[]> serial = new GraphEnhancer().Enhance(
+            tiles,
+            inferInternalIntersections: true,
+            inferTurnChannels: true,
+            maxDegreeOfParallelism: 1,
+            TestContext.Current.CancellationToken);
+        Dictionary<GraphId, byte[]> parallel = new GraphEnhancer().Enhance(
+            tiles,
+            inferInternalIntersections: true,
+            inferTurnChannels: true,
+            maxDegreeOfParallelism: 4,
+            TestContext.Current.CancellationToken);
+
+        GraphTile serialSourceTile = GraphTile.Create(
+            sourceGraphId.TileBase(),
+            serial[sourceGraphId.TileBase()]);
+        NodeInfo serialSourceNode = serialSourceTile.Node((int)sourceGraphId.Id());
+        DirectedEdge incomingStopEdge = Enumerable
+            .Range((int)serialSourceNode.EdgeIndex, (int)serialSourceNode.EdgeCount)
+            .Select(serialSourceTile.DirectedEdge)
+            .Single(edge => edge.EndNode == stopGraphId);
+
+        Assert.True(incomingStopEdge.StopSign);
+        Assert.Equal(serial.Keys.OrderBy(static id => id.Value), parallel.Keys.OrderBy(static id => id.Value));
+        foreach (GraphId tileId in serial.Keys)
+        {
+            Assert.Equal(serial[tileId], parallel[tileId]);
         }
     }
 
