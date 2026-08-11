@@ -281,15 +281,17 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             GenerationRestrictionRecord restriction =
                 semanticStore.ReadRestriction(restrictionOrdinal);
-            if (!TryGetComplexModes(
+            if (!ComplexRestrictionSemantics.TryProject(
                     semanticStore,
                     restriction,
-                    out uint modes,
-                    out bool viaWay,
-                    out bool includeFromWay))
+                    out ComplexRestrictionSemanticProjection projection))
             {
                 continue;
             }
+
+            uint modes = projection.Modes;
+            bool viaWay = projection.ViaWay;
+            bool includeFromWay = projection.IncludeFromWay;
 
             GenerationRestrictionViaRecord firstVia =
                 semanticStore.ReadRestrictionVia(restriction.ViaOffset);
@@ -491,111 +493,6 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
         }
     }
 
-    private static bool TryGetComplexModes(
-        CompactOsmSemanticStore semanticStore,
-        GenerationRestrictionRecord restriction,
-        out uint modes,
-        out bool viaWay,
-        out bool includeFromWay)
-    {
-        IReadOnlyDictionary<string, string> tags =
-            semanticStore.ReadTags(restriction.TagReference);
-        viaWay = false;
-        for (long viaOrdinal = restriction.ViaOffset;
-             viaOrdinal < restriction.ViaOffset + restriction.ViaCount;
-             viaOrdinal++)
-        {
-            viaWay |= semanticStore.ReadRestrictionVia(viaOrdinal).MemberType ==
-                      OsmMemberType.Way;
-        }
-
-        includeFromWay =
-            viaWay || !tags.ContainsKey("restriction:conditional");
-
-        uint specificModes = 0;
-        specificModes |= GetSpecificMode(tags, "restriction:motorcar",
-            (uint)(GraphConstants.AutoAccess | GraphConstants.MopedAccess));
-        specificModes |= GetSpecificMode(tags, "restriction:motorcycle",
-            GraphConstants.MotorcycleAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:taxi",
-            GraphConstants.TaxiAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:bus",
-            GraphConstants.BusAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:bicycle",
-            GraphConstants.BicycleAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:hgv",
-            GraphConstants.TruckAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:hazmat",
-            GraphConstants.TruckAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:emergency",
-            GraphConstants.EmergencyAccess);
-        specificModes |= GetSpecificMode(tags, "restriction:foot",
-            (uint)(GraphConstants.PedestrianAccess |
-                   GraphConstants.WheelchairAccess));
-
-        bool qualified =
-            tags.ContainsKey("restriction:conditional") ||
-            tags.ContainsKey("restriction:probable");
-        bool excepted =
-            tags.TryGetValue("except", out string? except) &&
-            !string.IsNullOrWhiteSpace(except);
-        if (!viaWay && specificModes == 0 && !qualified && !excepted)
-        {
-            modes = 0;
-            return false;
-        }
-
-        if (specificModes != 0)
-        {
-            modes = specificModes;
-            return true;
-        }
-
-        modes = (uint)(GraphConstants.AutoAccess |
-                       GraphConstants.MopedAccess |
-                       GraphConstants.TaxiAccess |
-                       GraphConstants.BusAccess |
-                       GraphConstants.BicycleAccess |
-                       GraphConstants.TruckAccess |
-                       GraphConstants.EmergencyAccess |
-                       GraphConstants.MotorcycleAccess);
-        if (!excepted)
-        {
-            return true;
-        }
-
-        foreach (string token in except!.Split(';'))
-        {
-            modes = token.Trim() switch
-            {
-                "motorcar" => modes & ~(uint)(
-                    GraphConstants.AutoAccess | GraphConstants.MopedAccess),
-                "motorcycle" => modes & ~(uint)GraphConstants.MotorcycleAccess,
-                "psv" => modes & ~(uint)(
-                    GraphConstants.TaxiAccess | GraphConstants.BusAccess),
-                "taxi" => modes & ~(uint)GraphConstants.TaxiAccess,
-                "bus" => modes & ~(uint)GraphConstants.BusAccess,
-                "bicycle" => modes & ~(uint)GraphConstants.BicycleAccess,
-                "hgv" => modes & ~(uint)GraphConstants.TruckAccess,
-                "emergency" => modes & ~(uint)GraphConstants.EmergencyAccess,
-                "foot" => modes & ~(uint)(
-                    GraphConstants.PedestrianAccess |
-                    GraphConstants.WheelchairAccess),
-                _ => modes,
-            };
-        }
-
-        return modes != 0;
-    }
-
-    private static uint GetSpecificMode(
-        IReadOnlyDictionary<string, string> tags,
-        string key,
-        uint mode) =>
-        tags.TryGetValue(key, out string? value) &&
-        byte.TryParse(value, out _)
-            ? mode
-            : 0;
 
     private static bool ContainsWayNode(
         IIntermediateSequenceStore<RestrictionWayEndpointRecord> endpoints,

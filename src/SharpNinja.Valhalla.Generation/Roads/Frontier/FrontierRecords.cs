@@ -128,6 +128,29 @@ internal readonly record struct GenerationRestrictionViaRecord(
     int ViaOrdinal,
     long CanonicalOrdinal);
 
+internal enum RestrictionViaProjectionKind : byte
+{
+    SourceWays = 0,
+    ToWaySentinel = 1,
+}
+
+internal readonly record struct ComplexRestrictionProjectionRecord(
+    ulong FromWayId,
+    ulong ToWayId,
+    long ViaOffset,
+    int ViaCount,
+    RestrictionViaProjectionKind ViaProjection,
+    RestrictionType Type,
+    uint Modes,
+    byte Probability,
+    ulong TimeDomain,
+    long CanonicalOrdinal);
+
+internal readonly record struct ReverseRestrictionProjectionRecord(
+    ulong FromWayId,
+    ulong ToWayId,
+    uint Modes,
+    long CanonicalOrdinal);
 
 internal readonly record struct GenerationGraphNodeCandidate(
     GenerationNodeRecord Node,
