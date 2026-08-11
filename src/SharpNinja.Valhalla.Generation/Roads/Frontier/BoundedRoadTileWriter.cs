@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 
 using SharpNinja.Valhalla.Generation.Storage;
 using SharpNinja.Valhalla.Baldr;
@@ -40,23 +41,30 @@ internal static class BoundedRoadTileWriter
         string restrictionWorkDirectory = Path.Combine(
             parentDirectory,
             $".{Path.GetFileName(fullOutputDirectory)}-restriction-index-{Guid.NewGuid():N}");
+        string complexRestrictionWorkDirectory = Path.Combine(
+            parentDirectory,
+            $".{Path.GetFileName(fullOutputDirectory)}-complex-restriction-index-{Guid.NewGuid():N}");
         long tileMemoryBudgetBytes = options.MemoryBudgetBytes;
         SimpleRestrictionMaskIndex? restrictionIndex = null;
+        ComplexRestrictionMarkerIndex? complexRestrictionIndex = null;
+        BoundedRoadTileWriteReceipt? receipt = null;
+        Exception? operationFailure = null;
+        Exception? cleanupFailure = null;
         try
         {
             if (semanticStore.RestrictionCount > 0)
             {
-                if (options.MemoryBudgetBytes < 8)
+                if (options.MemoryBudgetBytes < 16)
                 {
                     throw new ValhallaGenerationResourceLimitException(
-                        "The tile writer memory budget cannot fit a bounded restriction index.");
+                        "The tile writer memory budget cannot fit bounded restriction indexes.");
                 }
 
                 long indexMemoryBudgetBytes = Math.Max(
                     4,
-                    options.MemoryBudgetBytes / 4);
+                    options.MemoryBudgetBytes / 8);
                 tileMemoryBudgetBytes = checked(
-                    options.MemoryBudgetBytes - indexMemoryBudgetBytes);
+                    options.MemoryBudgetBytes - (indexMemoryBudgetBytes * 2));
                 long indexScratchBudgetBytes =
                     indexMemoryBudgetBytes > long.MaxValue / 4
                         ? long.MaxValue
@@ -71,6 +79,17 @@ internal static class BoundedRoadTileWriter
                             indexScratchBudgetBytes),
                         cancellationToken)
                     .ConfigureAwait(false);
+                complexRestrictionIndex =
+                    await ComplexRestrictionMarkerIndex.BuildAsync(
+                            semanticStore,
+                            graph,
+                            new ComplexRestrictionMarkerIndexOptions(
+                                complexRestrictionWorkDirectory,
+                                IntermediateStorageMode.Auto,
+                                indexMemoryBudgetBytes,
+                                indexScratchBudgetBytes),
+                            cancellationToken)
+                        .ConfigureAwait(false);
             }
 
             Directory.CreateDirectory(fullOutputDirectory);
@@ -107,6 +126,7 @@ internal static class BoundedRoadTileWriter
                     semanticStore,
                     graph,
                     restrictionIndex,
+                    complexRestrictionIndex,
                     identityOrdinal,
                     tileEnd,
                     tileBase,
@@ -119,18 +139,78 @@ internal static class BoundedRoadTileWriter
                 identityOrdinal = tileEnd;
             }
 
-            return new BoundedRoadTileWriteReceipt(
+            receipt = new BoundedRoadTileWriteReceipt(
                 tileCount,
                 tileCount == 0 ? 0 : 1,
                 peakWorkerMemoryBytes);
         }
+        catch (Exception exception)
+        {
+            operationFailure = exception;
+        }
         finally
         {
-            restrictionIndex?.Dispose();
-            if (Directory.Exists(restrictionWorkDirectory))
+            cleanupFailure = ExecuteCleanupActions(
+                () => complexRestrictionIndex?.Dispose(),
+                () => restrictionIndex?.Dispose(),
+                () => DeleteDirectoryIfPresent(complexRestrictionWorkDirectory),
+                () => DeleteDirectoryIfPresent(restrictionWorkDirectory));
+        }
+
+        return ResolveWriteOutcome(receipt, operationFailure, cleanupFailure);
+    }
+
+    internal static BoundedRoadTileWriteReceipt ResolveWriteOutcome(
+        BoundedRoadTileWriteReceipt? receipt,
+        Exception? operationFailure,
+        Exception? cleanupFailure)
+    {
+        if (operationFailure is not null)
+        {
+            if (cleanupFailure is not null)
             {
-                Directory.Delete(restrictionWorkDirectory, recursive: true);
+                operationFailure.Data["BoundedRoadTileWriter.CleanupFailure"] =
+                    cleanupFailure;
             }
+
+            ExceptionDispatchInfo.Capture(operationFailure).Throw();
+        }
+
+        if (cleanupFailure is not null)
+        {
+            ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+        }
+
+        return receipt ??
+            throw new InvalidOperationException("The bounded tile write produced no receipt.");
+    }
+
+    internal static Exception? ExecuteCleanupActions(
+        params Action[] cleanupActions)
+    {
+        ArgumentNullException.ThrowIfNull(cleanupActions);
+        Exception? firstFailure = null;
+        foreach (Action cleanup in cleanupActions)
+        {
+            ArgumentNullException.ThrowIfNull(cleanup);
+            try
+            {
+                cleanup();
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+            }
+        }
+
+        return firstFailure;
+    }
+
+    private static void DeleteDirectoryIfPresent(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive: true);
         }
     }
 
@@ -138,6 +218,7 @@ internal static class BoundedRoadTileWriter
         CompactOsmSemanticStore semanticStore,
         PooledRoadEdgeBuildResult graph,
         SimpleRestrictionMaskIndex? restrictionIndex,
+        ComplexRestrictionMarkerIndex? complexRestrictionIndex,
         long startIdentityOrdinal,
         long endIdentityOrdinal,
         GraphId tileBase,
@@ -275,6 +356,19 @@ internal static class BoundedRoadTileWriter
                         out uint restrictionMask))
                 {
                     directedEdge.SetRestrictions(restrictionMask);
+                }
+
+                if (complexRestrictionIndex is not null &&
+                    complexRestrictionIndex.TryGetMarker(
+                        identity.GraphId,
+                        edge.EdgeRecordId,
+                        forward,
+                        out ComplexRestrictionEdgeMarker complexMarker))
+                {
+                    directedEdge.SetStartRestriction(complexMarker.StartModes);
+                    directedEdge.SetEndRestriction(complexMarker.EndModes);
+                    directedEdge.SetComplexRestriction(
+                        complexMarker.PartOfComplexRestriction);
                 }
 
                 builder.DirectedEdges.Add(directedEdge);

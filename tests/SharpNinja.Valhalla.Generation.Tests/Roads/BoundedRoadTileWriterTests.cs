@@ -237,7 +237,155 @@ public sealed class BoundedRoadTileWriterTests
         }
     }
 
+    [Fact]
+    public async Task WriteAsync_ComplexViaWayMarksStartEndAndViaEdges()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new ComplexRestrictionRoadSource(),
+                    SemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using PooledRoadEdgeBuildResult graph =
+                await PooledRoadEdgeBuilder.BuildAsync(
+                    semanticStore,
+                    BuilderOptions(Path.Combine(root, "pooled")),
+                    TestContext.Current.CancellationToken);
+            string output = Path.Combine(root, "tiles");
 
+            await BoundedRoadTileWriter.WriteAsync(
+                semanticStore,
+                graph,
+                new BoundedRoadTileWriterOptions(
+                    output,
+                    MemoryBudgetBytes: 8 * 1024 * 1024,
+                    MaxDegreeOfParallelism: 1),
+                TestContext.Current.CancellationToken);
+
+            uint expectedModes =
+                (uint)(GraphConstants.AutoAccess |
+                       GraphConstants.MopedAccess |
+                       GraphConstants.TaxiAccess |
+                       GraphConstants.BusAccess |
+                       GraphConstants.BicycleAccess |
+                       GraphConstants.TruckAccess |
+                       GraphConstants.EmergencyAccess |
+                       GraphConstants.MotorcycleAccess);
+            GraphId firstViaNode = FindGraphId(graph, 11);
+            GraphId lastViaNode = FindGraphId(graph, 12);
+            GraphId fromNode = FindGraphId(graph, 10);
+            GraphId toNode = FindGraphId(graph, 13);
+            DirectedEdge inbound = FindDirectedEdge(
+                output,
+                fromNode,
+                wayId: 20,
+                endNode: firstViaNode);
+            DirectedEdge fromReverse = FindDirectedEdge(
+                output,
+                firstViaNode,
+                wayId: 20,
+                endNode: fromNode);
+            DirectedEdge outbound = FindDirectedEdge(
+                output,
+                lastViaNode,
+                wayId: 22,
+                endNode: toNode);
+            DirectedEdge toReverse = FindDirectedEdge(
+                output,
+                toNode,
+                wayId: 22,
+                endNode: lastViaNode);
+            DirectedEdge viaForward = FindDirectedEdge(
+                output,
+                firstViaNode,
+                wayId: 21,
+                endNode: lastViaNode);
+            DirectedEdge viaReverse = FindDirectedEdge(
+                output,
+                lastViaNode,
+                wayId: 21,
+                endNode: firstViaNode);
+
+            Assert.Equal(expectedModes, inbound.StartRestriction);
+            Assert.Equal(expectedModes, outbound.EndRestriction);
+            Assert.True(inbound.PartOfComplexRestriction);
+            Assert.True(fromReverse.PartOfComplexRestriction);
+            Assert.True(outbound.PartOfComplexRestriction);
+            Assert.True(toReverse.PartOfComplexRestriction);
+            Assert.True(viaForward.PartOfComplexRestriction);
+            Assert.True(viaReverse.PartOfComplexRestriction);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+
+
+
+    [Fact]
+    public void ExecuteCleanupActions_RunsEveryActionAndPreservesFirstFailure()
+    {
+        var calls = new List<int>();
+        var firstFailure = new IOException("first cleanup failure");
+        var laterFailure = new UnauthorizedAccessException("later cleanup failure");
+
+        Exception? actual = BoundedRoadTileWriter.ExecuteCleanupActions(
+            () =>
+            {
+                calls.Add(1);
+                throw firstFailure;
+            },
+            () => calls.Add(2),
+            () =>
+            {
+                calls.Add(3);
+                throw laterFailure;
+            },
+            () => calls.Add(4));
+
+        Assert.Same(firstFailure, actual);
+        Assert.Equal([1, 2, 3, 4], calls);
+    }
+
+    [Fact]
+    public void ResolveWriteOutcome_OperationFailureRemainsPrimaryWhenCleanupFails()
+    {
+        var operationFailure = new InvalidDataException("generation failed");
+        var cleanupFailure = new IOException("cleanup failed");
+
+        InvalidDataException actual = Assert.Throws<InvalidDataException>(
+            () => BoundedRoadTileWriter.ResolveWriteOutcome(
+                receipt: null,
+                operationFailure,
+                cleanupFailure));
+
+        Assert.Same(operationFailure, actual);
+        Assert.Same(
+            cleanupFailure,
+            actual.Data["BoundedRoadTileWriter.CleanupFailure"]);
+    }
+
+    [Fact]
+    public void ResolveWriteOutcome_CleanupFailureSurfacesAfterSuccessfulWrite()
+    {
+        var receipt = new BoundedRoadTileWriteReceipt(
+            TileCount: 1,
+            PeakActiveTileBuilders: 1,
+            PeakWorkerMemoryBytes: 1024);
+        var cleanupFailure = new IOException("cleanup failed");
+
+        IOException actual = Assert.Throws<IOException>(
+            () => BoundedRoadTileWriter.ResolveWriteOutcome(
+                receipt,
+                operationFailure: null,
+                cleanupFailure));
+
+        Assert.Same(cleanupFailure, actual);
+    }
 
     [Fact]
     public async Task WriteAsync_InsufficientMemoryBudgetCannotPublishTile()
@@ -280,6 +428,32 @@ public sealed class BoundedRoadTileWriterTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    private static DirectedEdge FindDirectedEdge(
+        string tileDirectory,
+        GraphId startNode,
+        ulong wayId,
+        GraphId endNode)
+    {
+        GraphTile tile = GraphTile.Create(tileDirectory, startNode.TileBase()) ??
+            throw new InvalidDataException(
+                $"Graph tile {startNode.TileBase()} was not written.");
+        NodeInfo node = tile.Node(startNode);
+        for (uint localIndex = 0; localIndex < node.EdgeCount; localIndex++)
+        {
+            DirectedEdge edge = tile.DirectedEdge(
+                checked((int)(node.EdgeIndex + localIndex)));
+            if (edge.EndNode == endNode &&
+                tile.EdgeInfo(edge).WayId == wayId)
+            {
+                return edge;
+            }
+        }
+
+        throw new InvalidDataException(
+            $"Way {wayId} from {startNode} to {endNode} was not written.");
+    }
+
 
     private static GraphId FindGraphId(
         PooledRoadEdgeBuildResult graph,
@@ -326,6 +500,65 @@ public sealed class BoundedRoadTileWriterTests
         Directory.CreateDirectory(root);
         return root;
     }
+
+    private sealed class ComplexRestrictionRoadSource : IOsmPbfEntitySource
+    {
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pass == OsmPbfEntityPass.Ways)
+            {
+                visitor.Way(20, [10UL, 11UL], RoadTags());
+                visitor.Way(21, [11UL, 12UL], RoadTags());
+                visitor.Way(22, [12UL, 13UL], RoadTags());
+                return;
+            }
+
+            if (pass == OsmPbfEntityPass.Relations)
+            {
+                visitor.Relation(
+                    30,
+                    [
+                        new OsmRelationMember(20, OsmMemberType.Way, "from"),
+                        new OsmRelationMember(21, OsmMemberType.Way, "via"),
+                        new OsmRelationMember(22, OsmMemberType.Way, "to"),
+                    ],
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["type"] = "restriction",
+                        ["restriction"] = "no_left_turn",
+                    });
+                return;
+            }
+
+            if (pass != OsmPbfEntityPass.Nodes)
+            {
+                return;
+            }
+
+            visitor.Node(10, 36.1000, -86.7030, EmptyTags());
+            visitor.Node(11, 36.1000, -86.7020, EmptyTags());
+            visitor.Node(12, 36.1000, -86.7010, EmptyTags());
+            visitor.Node(13, 36.1000, -86.7000, EmptyTags());
+        }
+
+        private static IReadOnlyDictionary<string, string> RoadTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["highway"] = "primary",
+            };
+
+        private static IReadOnlyDictionary<string, string> EmptyTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
 
     private sealed class SimpleRestrictionRoadSource : IOsmPbfEntitySource
     {
