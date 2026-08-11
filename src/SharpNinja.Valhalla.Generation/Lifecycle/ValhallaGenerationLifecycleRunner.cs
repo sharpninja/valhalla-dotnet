@@ -671,7 +671,10 @@ internal static class ValhallaGenerationLifecycleRunner
             checkpointIdentity,
             result.Warnings,
             result.Failures,
-            result.OutputHashes);
+            result.OutputHashes)
+        {
+            FrontierMetrics = result.FrontierMetrics,
+        };
 
     private static void ReportProgress(
         IProgress<ValhallaGenerationBuildProgress>? progress,

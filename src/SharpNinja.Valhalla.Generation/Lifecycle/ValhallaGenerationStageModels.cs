@@ -40,6 +40,27 @@ public sealed record ValhallaGenerationFailure(
     string Message,
     ValhallaGenerationStage? Stage = null);
 
+public sealed record ValhallaGenerationFrontierMetrics(
+    long CanonicalNodesRead,
+    long WayNodeOccurrencesProcessed,
+    long GraphAnchorsCreated,
+    long SecondaryNodesProcessed,
+    long SecondarySlotsReleased,
+    long TotalSlotRents,
+    long SlotReuseCount,
+    int PeakLiveSlots,
+    int TotalSlabsRented,
+    long PeakSlabBytes,
+    int MaximumUnresolvedPathAnchors,
+    long IncidenceStoreBytes,
+    long NodeStoreBytes,
+    long ShapeStoreBytes,
+    long EdgeStoreBytes,
+    int SelectedDegreeOfParallelism,
+    long PerWorkerMemoryReservationBytes,
+    long MappedStorageHighWaterMarkBytes,
+    long StaleHandleRejections);
+
 public sealed record ValhallaGenerationStageReceipt(
     ValhallaGenerationStage Stage,
     DateTimeOffset StartedAtUtc,
@@ -59,4 +80,6 @@ public sealed record ValhallaGenerationStageReceipt(
     IReadOnlyDictionary<string, string> OutputHashes)
 {
     public TimeSpan Duration => EndedAtUtc - StartedAtUtc;
+
+    public ValhallaGenerationFrontierMetrics? FrontierMetrics { get; init; }
 }

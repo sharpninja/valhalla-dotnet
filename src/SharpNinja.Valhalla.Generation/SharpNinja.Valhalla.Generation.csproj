@@ -27,4 +27,8 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpNinja.Valhalla\SharpNinja.Valhalla.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpNinja.Valhalla.Generation.Tests" />
+  </ItemGroup>
 </Project>

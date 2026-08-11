@@ -4,6 +4,22 @@ using SharpNinja.Valhalla.Mjolnir;
 
 namespace SharpNinja.Valhalla.Generation.Roads;
 
+public enum ManagedRoadGraphPipeline
+{
+    Legacy = 0,
+    PooledFrontier = 1,
+}
+
+public static class ManagedRoadGraphPipelineSelector
+{
+    public static ManagedRoadGraphPipeline Resolve(
+        ValhallaGenerationProfile profile,
+        ManagedRoadGraphPipeline requestedPipeline) =>
+        profile == ValhallaGenerationProfile.LegacyEmbedded
+            ? ManagedRoadGraphPipeline.Legacy
+            : requestedPipeline;
+}
+
 public sealed record ManagedRoadGraphBuildRequest(
     IReadOnlyList<string> OsmPbfPaths,
     string WorkingDirectory,
@@ -11,7 +27,11 @@ public sealed record ManagedRoadGraphBuildRequest(
     IntermediateStorageMode StorageMode,
     long MemoryBudgetBytes,
     long ScratchDiskBudgetBytes,
-    TileBuilderConfig? TileBuilderConfig = null);
+    TileBuilderConfig? TileBuilderConfig = null)
+{
+    public ManagedRoadGraphPipeline Pipeline { get; init; } =
+        ManagedRoadGraphPipeline.Legacy;
+}
 
 public sealed record ManagedRoadGraphBuildResult(
     TileBuilderResult TileBuilderResult,
@@ -21,7 +41,10 @@ public sealed record ManagedRoadGraphBuildResult(
     TimeSpan PbfIngestionDuration,
     TimeSpan SemanticParsingDuration,
     TimeSpan TileConstructionDuration,
-    IReadOnlyDictionary<string, TimeSpan> SemanticStageDurations);
+    IReadOnlyDictionary<string, TimeSpan> SemanticStageDurations)
+{
+    public ValhallaGenerationFrontierMetrics? FrontierMetrics { get; init; }
+}
 
 /// <summary>
 /// Production road-graph composition that decodes physical PBF blocks once and supplies the core

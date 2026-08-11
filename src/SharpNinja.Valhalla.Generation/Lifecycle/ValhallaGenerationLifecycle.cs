@@ -102,6 +102,8 @@ public sealed record ValhallaGenerationStageResult(
     IReadOnlyList<ValhallaGenerationFailure> Failures,
     IReadOnlyDictionary<string, string> OutputHashes)
 {
+    public ValhallaGenerationFrontierMetrics? FrontierMetrics { get; init; }
+
     public static ValhallaGenerationStageResult Empty(string outputIdentity) =>
         new(outputIdentity, 0, 0, 0, 0, 0, 0, [], [], new Dictionary<string, string>());
 }
