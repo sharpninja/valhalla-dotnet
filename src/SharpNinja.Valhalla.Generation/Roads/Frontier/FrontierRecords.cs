@@ -68,6 +68,13 @@ internal enum EdgeSemanticFlags : uint
     Ferry = 1 << 0,
     Link = 1 << 1,
     HasTrafficControl = 1 << 2,
+    Rail = 1 << 3,
+    Oneway = 1 << 4,
+    OnewayReverse = 1 << 5,
+    Roundabout = 1 << 6,
+    DestinationOnly = 1 << 7,
+    DestinationOnlyHgv = 1 << 8,
+    NoThruTraffic = 1 << 9,
 }
 
 internal readonly record struct GenerationNodeRecord(

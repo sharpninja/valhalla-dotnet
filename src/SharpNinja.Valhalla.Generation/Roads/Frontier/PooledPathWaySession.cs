@@ -5,7 +5,10 @@ internal sealed class PooledPathWaySession : IDisposable
     private readonly PooledNodeArena arena;
     private readonly IFrontierEdgeSink edgeSink;
     private readonly long wayId;
+    private readonly long canonicalOrdinal;
+    private readonly PooledWayEdgeSemantics semantics;
     private NodeHandle currentAnchor;
+    private EdgeSemanticFlags segmentFlags;
     private GenerationNodeRecord currentAnchorNode;
     private IFrontierShapeWriter? shapeWriter;
     private bool hasCurrentAnchor;
@@ -22,11 +25,26 @@ internal sealed class PooledPathWaySession : IDisposable
     internal PooledPathWaySession(
         PooledNodeArena arena,
         IFrontierEdgeSink edgeSink,
-        long wayId)
+        long wayId,
+        long canonicalOrdinal,
+        PooledWayEdgeSemantics semantics)
     {
         this.arena = arena ?? throw new ArgumentNullException(nameof(arena));
         this.edgeSink = edgeSink ?? throw new ArgumentNullException(nameof(edgeSink));
+        ArgumentOutOfRangeException.ThrowIfNegative(wayId);
+        ArgumentOutOfRangeException.ThrowIfNegative(canonicalOrdinal);
+        if ((ulong)canonicalOrdinal > uint.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(canonicalOrdinal),
+                "A canonical way ordinal must fit in 32 bits.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(semantics.AttributeReference);
         this.wayId = wayId;
+        this.canonicalOrdinal = canonicalOrdinal;
+        this.semantics = semantics;
+        segmentFlags = semantics.Flags;
     }
 
     internal void Append(
@@ -47,6 +65,7 @@ internal sealed class PooledPathWaySession : IDisposable
         }
 
         IFrontierShapeWriter activeShapeWriter = EnsureShapeWriter();
+        TrackNodeSemanticFlags(occurrence.Node.Flags);
         if (!occurrence.IsGraphAnchor)
         {
             AppendSecondary(occurrence, activeShapeWriter);
@@ -125,6 +144,7 @@ internal sealed class PooledPathWaySession : IDisposable
 
         currentAnchor = arena.Rent(CreateAnchor(occurrence));
         currentAnchorNode = occurrence.Node;
+        TrackNodeSemanticFlags(occurrence.Node.Flags);
         hasCurrentAnchor = true;
         wayNodeOccurrences = 1;
         anchors = 1;
@@ -192,19 +212,21 @@ internal sealed class PooledPathWaySession : IDisposable
 
             ref NodeWorkItem source = ref arena.Resolve(currentAnchor);
             ref NodeWorkItem target = ref arena.Resolve(nextAnchor);
-            long edgeRecordId = checked((wayId * 1_000_000L) + segmentOrdinal);
+            long edgeRecordId = ComposeEdgeRecordId(
+                canonicalOrdinal,
+                segmentOrdinal);
             edgeSink.PersistEdge(new GenerationEdgeRecord(
                 edgeRecordId,
                 source.StableGraphId,
                 target.StableGraphId,
                 wayId,
                 shape,
-                EdgeSemanticFlags.None,
-                ForwardAccess: 0,
-                ReverseAccess: 0,
-                AttributeReference: 0,
-                Importance: 0,
-                HasNames: false,
+                segmentFlags,
+                semantics.ForwardAccess,
+                semantics.ReverseAccess,
+                semantics.AttributeReference,
+                semantics.Importance,
+                semantics.HasNames,
                 CanonicalOrdinal: edgeRecordId));
             edgeRecords = checked(edgeRecords + 1);
 
@@ -214,6 +236,8 @@ internal sealed class PooledPathWaySession : IDisposable
 
             currentAnchor = nextAnchor;
             currentAnchorNode = occurrence.Node;
+            segmentFlags = semantics.Flags;
+            TrackNodeSemanticFlags(occurrence.Node.Flags);
             hasCurrentAnchor = true;
             hasNextAnchor = false;
             segmentOrdinal = checked(segmentOrdinal + 1);
@@ -226,6 +250,34 @@ internal sealed class PooledPathWaySession : IDisposable
                 arena.Abandon(nextAnchor);
             }
         }
+    }
+
+    private void TrackNodeSemanticFlags(NodeSemanticFlags flags)
+    {
+        const NodeSemanticFlags TrafficControlFlags =
+            NodeSemanticFlags.TrafficSignal |
+            NodeSemanticFlags.StopSign |
+            NodeSemanticFlags.YieldSign;
+        if ((flags & TrafficControlFlags) != 0)
+        {
+            segmentFlags |= EdgeSemanticFlags.HasTrafficControl;
+        }
+    }
+
+    private static long ComposeEdgeRecordId(
+        long canonicalWayOrdinal,
+        int segmentOrdinal)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(canonicalWayOrdinal);
+        ArgumentOutOfRangeException.ThrowIfNegative(segmentOrdinal);
+        if ((ulong)canonicalWayOrdinal > uint.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(canonicalWayOrdinal),
+                "A canonical way ordinal must fit in 32 bits.");
+        }
+
+        return checked((canonicalWayOrdinal << 32) | (uint)segmentOrdinal);
     }
 
     private static NodeWorkItem CreateAnchor(in PooledPathNode occurrence) => new()

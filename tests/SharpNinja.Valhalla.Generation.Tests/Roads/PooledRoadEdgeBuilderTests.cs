@@ -42,6 +42,14 @@ public sealed class PooledRoadEdgeBuilderTests
             Assert.Equal(10, first.WayId);
             Assert.Equal(10, second.WayId);
             Assert.Equal(11, third.WayId);
+            Assert.Equal(
+                semanticStore.ReadWay(0).TagReference,
+                first.AttributeReference);
+            Assert.NotEqual(0U, first.ForwardAccess);
+            Assert.NotEqual(0U, first.ReverseAccess);
+            Assert.Equal(
+                (byte)SharpNinja.Valhalla.Baldr.RoadClass.Residential,
+                first.Importance);
             Assert.Equal(3, result.ReadShape(first.Shape).Length);
             Assert.Equal(3, result.ReadShape(second.Shape).Length);
             Assert.Equal(2, result.ReadShape(third.Shape).Length);

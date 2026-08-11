@@ -284,7 +284,13 @@ internal static class PooledRoadEdgeBuilder
         {
             cancellationToken.ThrowIfCancellationRequested();
             GenerationWayRecord way = semanticStore.ReadWay(wayOrdinal);
-            using PooledPathWaySession session = frontier.BeginWay(way.OsmWayId);
+            PooledWayEdgeSemantics semantics = PooledWayEdgeSemantics.Project(
+                semanticStore.ReadTags(way.TagReference),
+                way.TagReference);
+            using PooledPathWaySession session = frontier.BeginWay(
+                way.OsmWayId,
+                way.CanonicalOrdinal,
+                semantics);
             for (var nodeOrdinal = 0; nodeOrdinal < way.NodeReferenceCount; nodeOrdinal++)
             {
                 if ((nodeOrdinal & 0x3FFF) == 0)

@@ -14,7 +14,13 @@ internal sealed class PooledPathFrontier(
     IFrontierEdgeSink edgeSink)
 {
     internal PooledPathWaySession BeginWay(long wayId) =>
-        new(arena, edgeSink, wayId);
+        BeginWay(wayId, wayId, default);
+
+    internal PooledPathWaySession BeginWay(
+        long wayId,
+        long canonicalOrdinal,
+        PooledWayEdgeSemantics semantics) =>
+        new(arena, edgeSink, wayId, canonicalOrdinal, semantics);
 
     internal PooledPathFrontierResult ProcessWay(
         long wayId,
