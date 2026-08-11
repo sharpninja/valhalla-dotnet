@@ -120,29 +120,33 @@ public sealed class PooledNodeFrontierTests
     [Fact]
     public void PeakLiveNodes_IsBoundedByFrontierAndPreservesSemanticGraph()
     {
-        const int secondaryCount = 100_000;
-        var nodes = new PooledPathNode[secondaryCount + 2];
-        nodes[0] = Anchor(1, new GraphId(7, 0, 0));
+        const int secondaryCount = 1_000_000;
+        using var arena = new PooledNodeArena(slabCapacity: 8, memoryBudgetBytes: 4096);
+        var sink = new CountingFrontierEdgeSink();
+        var frontier = new PooledPathFrontier(arena, sink);
+        using PooledPathWaySession session = frontier.BeginWay(8001);
+
+        session.Append(
+            Anchor(1, new GraphId(7, 0, 0)),
+            TestContext.Current.CancellationToken);
         for (int index = 0; index < secondaryCount; index++)
         {
-            nodes[index + 1] = Secondary(
-                index + 2,
-                360000000 + index,
-                -860000000 + index);
+            session.Append(
+                Secondary(
+                    index + 2,
+                    360000000 + index,
+                    -860000000 + index),
+                TestContext.Current.CancellationToken);
         }
 
-        nodes[^1] = Anchor(secondaryCount + 2, new GraphId(7, 0, 1));
-
-        using var arena = new PooledNodeArena(slabCapacity: 8, memoryBudgetBytes: 4096);
-        var sink = new RecordingFrontierEdgeSink();
-        var frontier = new PooledPathFrontier(arena, sink);
-        PooledPathFrontierResult result = frontier.ProcessWay(
-            8001,
-            nodes,
+        session.Append(
+            Anchor(secondaryCount + 2, new GraphId(7, 0, 1)),
+            TestContext.Current.CancellationToken);
+        PooledPathFrontierResult result = session.Complete(
             TestContext.Current.CancellationToken);
 
         GenerationEdgeRecord edge = Assert.Single(sink.Edges);
-        Assert.Equal(secondaryCount + 2, sink.Shapes[edge.Shape].Count);
+        Assert.Equal(secondaryCount + 2, sink.CompletedShapePointCount);
         Assert.Equal(secondaryCount, result.SecondaryNodesProcessed);
         Assert.Equal(secondaryCount, result.SecondarySlotsReleased);
         Assert.True(result.PeakLiveSlots <= 3, $"Peak live slots was {result.PeakLiveSlots}.");
@@ -253,4 +257,45 @@ public sealed class PooledNodeFrontierTests
             public void Dispose() => completed = true;
         }
     }
+    private sealed class CountingFrontierEdgeSink : IFrontierEdgeSink
+    {
+        private long nextShapeOffset;
+
+        public List<GenerationEdgeRecord> Edges { get; } = [];
+
+        public int CompletedShapePointCount { get; private set; }
+
+        public IFrontierShapeWriter BeginShape(long wayId) => new CountingShapeWriter(this);
+
+        public void PersistEdge(GenerationEdgeRecord edge) => Edges.Add(edge);
+
+        private sealed class CountingShapeWriter(CountingFrontierEdgeSink owner)
+            : IFrontierShapeWriter
+        {
+            private int pointCount;
+            private bool completed;
+
+            public void Append(in GenerationNodeRecord node)
+            {
+                ObjectDisposedException.ThrowIf(completed, this);
+                pointCount = checked(pointCount + 1);
+            }
+
+            public EdgeShapeReference Complete()
+            {
+                ObjectDisposedException.ThrowIf(completed, this);
+                completed = true;
+                owner.CompletedShapePointCount = pointCount;
+                var shape = new EdgeShapeReference(
+                    owner.nextShapeOffset,
+                    pointCount,
+                    checked(pointCount * Unsafe.SizeOf<GenerationNodeRecord>()));
+                owner.nextShapeOffset += shape.ByteLength;
+                return shape;
+            }
+
+            public void Dispose() => completed = true;
+        }
+    }
+
 }
