@@ -28,6 +28,7 @@ internal sealed class DurableFrontierEdgeSink :
     private readonly IntermediateSequenceStore<GenerationEdgeRecord> edges;
     private readonly int shapeBufferSizeBytes;
     private ShapeWriter? activeWriter;
+    private long lastEdgeRecordId = -1;
     private bool complete;
     private bool disposed;
 
@@ -134,7 +135,15 @@ internal sealed class DurableFrontierEdgeSink :
                 "The active shape must complete before its edge is persisted.");
         }
 
+        if (edge.EdgeRecordId < 0 ||
+            (edges.State.RecordCount != 0 && edge.EdgeRecordId <= lastEdgeRecordId))
+        {
+            throw new InvalidDataException(
+                "Durable frontier edges must have unique increasing record identities.");
+        }
+
         edges.Append(edge);
+        lastEdgeRecordId = edge.EdgeRecordId;
     }
 
     internal async ValueTask<DurableFrontierEdgeStoreReceipt> CompleteAsync(
@@ -165,6 +174,41 @@ internal sealed class DurableFrontierEdgeSink :
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         return edges.Read(ordinal);
+    }
+
+    internal bool TryReadEdgeByRecordId(
+        long edgeRecordId,
+        out GenerationEdgeRecord edge)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        long low = 0;
+        long high = edges.State.RecordCount;
+        while (low < high)
+        {
+            long middle = low + ((high - low) / 2);
+            GenerationEdgeRecord candidate = edges.Read(middle);
+            if (candidate.EdgeRecordId < edgeRecordId)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        if (low < edges.State.RecordCount)
+        {
+            GenerationEdgeRecord candidate = edges.Read(low);
+            if (candidate.EdgeRecordId == edgeRecordId)
+            {
+                edge = candidate;
+                return true;
+            }
+        }
+
+        edge = default;
+        return false;
     }
 
     internal GenerationNodeRecord[] ReadShape(EdgeShapeReference shape)

@@ -80,6 +80,41 @@ internal sealed class NodeEdgeIncidenceIndex : IDisposable
         return graphNodes.Read(ordinal);
     }
 
+    internal bool TryGetGraphNode(
+        GraphId nodeId,
+        out GenerationGraphNodeRecord graphNode)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        long low = 0;
+        long high = graphNodes.State.RecordCount;
+        while (low < high)
+        {
+            long middle = low + ((high - low) / 2);
+            GenerationGraphNodeRecord candidate = graphNodes.Read(middle);
+            if (candidate.NodeId < nodeId)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        if (low < graphNodes.State.RecordCount)
+        {
+            GenerationGraphNodeRecord candidate = graphNodes.Read(low);
+            if (candidate.NodeId == nodeId)
+            {
+                graphNode = candidate;
+                return true;
+            }
+        }
+
+        graphNode = default;
+        return false;
+    }
+
     internal static async ValueTask<NodeEdgeIncidenceIndex> BuildAsync(
         IFrontierEdgeSource edges,
         NodeEdgeIncidenceIndexOptions options,

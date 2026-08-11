@@ -58,10 +58,55 @@ internal sealed class PooledRoadEdgeBuildResult : IDisposable
 
     internal ValhallaGenerationFrontierMetrics FrontierMetrics { get; }
 
+    internal long IdentityCount
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return graphIdentities.IdentityCount;
+        }
+    }
+
+    internal StableGraphNodeIdentity ReadIdentity(long ordinal)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return graphIdentities.ReadIdentity(ordinal);
+    }
+
+    internal bool TryGetCanonicalNode(
+        long osmNodeId,
+        out GenerationNodeRecord node)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return nodeIndex.TryGetNode(osmNodeId, out node);
+    }
+
+    internal bool TryGetGraphNode(
+        GraphId nodeId,
+        out GenerationGraphNodeRecord graphNode)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return graphNodes.TryGetGraphNode(nodeId, out graphNode);
+    }
+
+    internal NodeEdgeIncidenceRecord ReadIncidence(long ordinal)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return graphNodes.ReadIncidence(ordinal);
+    }
+
     internal GenerationEdgeRecord ReadEdge(long ordinal)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         return edges.ReadEdge(ordinal);
+    }
+
+    internal bool TryReadEdgeByRecordId(
+        long edgeRecordId,
+        out GenerationEdgeRecord edge)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return edges.TryReadEdgeByRecordId(edgeRecordId, out edge);
     }
 
     internal GenerationNodeRecord[] ReadShape(EdgeShapeReference reference)
