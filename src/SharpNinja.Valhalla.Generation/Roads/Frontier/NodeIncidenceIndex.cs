@@ -69,6 +69,44 @@ internal sealed class NodeIncidenceIndex : IDisposable
         return summaries.Read(ordinal);
     }
 
+    internal bool TryFindSummary(long osmNodeId, out NodeIncidenceSummary summary)
+    {
+        long ordinal = FindSummaryOrdinalAtOrAfter(osmNodeId);
+        if (ordinal < SummaryCount)
+        {
+            NodeIncidenceSummary candidate = ReadSummary(ordinal);
+            if (candidate.OsmNodeId == osmNodeId)
+            {
+                summary = candidate;
+                return true;
+            }
+        }
+
+        summary = default;
+        return false;
+    }
+
+    internal long FindSummaryOrdinalAtOrAfter(long osmNodeId)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        long low = 0;
+        long high = summaries.State.RecordCount;
+        while (low < high)
+        {
+            long middle = low + ((high - low) / 2);
+            if (summaries.Read(middle).OsmNodeId < osmNodeId)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
     internal static async ValueTask<NodeIncidenceIndex> BuildAsync(
         IIntermediateSequenceStore<NodeIncidenceRecord> input,
         NodeIncidenceIndexOptions options,

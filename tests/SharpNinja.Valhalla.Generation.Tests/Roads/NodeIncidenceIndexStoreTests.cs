@@ -77,6 +77,14 @@ public sealed class NodeIncidenceIndexStoreTests
                 Assert.True(summary.AnchorFlags.HasFlag(NodeAnchorFlags.SharedWay));
             }
 
+            Assert.Equal(0, index.FindSummaryOrdinalAtOrAfter(0));
+            Assert.Equal(0, index.FindSummaryOrdinalAtOrAfter(1));
+            Assert.Equal(4, index.FindSummaryOrdinalAtOrAfter(5));
+            Assert.Equal(10, index.FindSummaryOrdinalAtOrAfter(11));
+            Assert.True(index.TryFindSummary(5, out NodeIncidenceSummary found));
+            Assert.Equal(5, found.OsmNodeId);
+            Assert.False(index.TryFindSummary(11, out _));
+
             Assert.True(index.SortReceipt.InitialRunCount > 1);
             Assert.Equal(100, index.IncidenceManifest.RecordCount);
             Assert.Equal(10, index.SummaryManifest.RecordCount);

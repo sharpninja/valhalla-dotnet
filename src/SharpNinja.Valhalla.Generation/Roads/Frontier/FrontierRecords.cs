@@ -1,5 +1,6 @@
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
+using SharpNinja.Valhalla.Mjolnir;
 
 namespace SharpNinja.Valhalla.Generation.Roads.Frontier;
 
@@ -75,6 +76,34 @@ internal readonly record struct GenerationNodeRecord(
     int LongitudeE7,
     NodeSemanticFlags Flags,
     long TagReference);
+
+internal readonly record struct GenerationWayRecord(
+    long OsmWayId,
+    long NodeReferenceOffset,
+    int NodeReferenceCount,
+    long TagReference,
+    long CanonicalOrdinal);
+
+internal readonly record struct GenerationWayNodeReference(
+    long OsmNodeId,
+    long OsmWayId,
+    int NodeOrdinal,
+    long CanonicalOrdinal);
+
+internal readonly record struct GenerationRelationRecord(
+    long OsmRelationId,
+    long MemberOffset,
+    int MemberCount,
+    long TagReference,
+    long CanonicalOrdinal);
+
+internal readonly record struct GenerationRelationMemberRecord(
+    long OsmRelationId,
+    long MemberId,
+    OsmMemberType MemberType,
+    long RoleReference,
+    int MemberOrdinal,
+    long CanonicalOrdinal);
 
 internal readonly record struct GenerationGraphNodeCandidate(
     GenerationNodeRecord Node,
