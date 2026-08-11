@@ -22,8 +22,10 @@
 //   - THREADING: validation supports bounded worker-local readers after the tile set and dataset
 //     identity are frozen. Requested concurrency is capped at the profiled degree of four because a
 //     Nashville DOP-16 probe exposed cross-tile read and binning contention. Worker caches divide the
-//     configured reader budget, per-worker results are merged deterministically, and tweener writes
-//     and checksum publication remain behind explicit barriers. The legacy overload stays serial.
+//     configured reader budget and read the frozen source graph while each worker writes only to a
+//     private validation tree. Per-worker results are merged deterministically; validated-tile
+//     publication, tweener writes, and checksums remain behind explicit barriers. The legacy overload
+//     stays serial.
 //   - EDGE BINNING (tweeners / GraphTileBuilder::BinEdges / AddBins): NOT ported. Edge bins are the
 //     spatial index used by loki edge-search-by-bin; this port snaps via the ported loki
 //     ClosestFirstGenerator over the tile node/edge geometry, not the bins, so the bin section and
@@ -315,114 +317,174 @@ public static class GraphValidator
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var stats = new ValidatorStats();
-        var stopwatch = Stopwatch.StartNew();
-        byte transitLevel = TileHierarchy.GetTransitLevel().Level;
-        GraphReader.Config workerConfig = CreateParallelWorkerConfig(
-            config,
-            maxDegreeOfParallelism);
-        var discoveryReader = new GraphReader(workerConfig);
-        var tileSet = new List<GraphId>(discoveryReader.GetTileSet());
-        tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
-        stats.TileCount = tileSet.Count;
-
-        ulong datasetId = 0;
-        if (tileSet.Count > 0)
+        string validationOutputDirectory = CreateParallelValidationOutputDirectory(
+            config.TileDir);
+        try
         {
-            GraphTile? firstTile = discoveryReader.GetGraphTile(tileSet[0]);
-            if (firstTile is null)
-            {
-                throw new InvalidDataException(
-                    "The graph tile set contains an unreadable first tile.");
-            }
+            var stats = new ValidatorStats();
+            var stopwatch = Stopwatch.StartNew();
+            byte transitLevel = TileHierarchy.GetTransitLevel().Level;
+            GraphReader.Config workerConfig = CreateParallelWorkerConfig(
+                config,
+                maxDegreeOfParallelism);
+            var discoveryReader = new GraphReader(workerConfig);
+            var tileSet = new List<GraphId>(discoveryReader.GetTileSet());
+            tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
+            stats.TileCount = tileSet.Count;
 
-            datasetId = firstTile.Header().DatasetId();
-        }
-
-        discoveryReader.Clear();
-        var completedWorkers = new ConcurrentBag<ValidationWorker>();
-        Parallel.ForEach(
-            tileSet,
-            new ParallelOptions
+            ulong datasetId = 0;
+            if (tileSet.Count > 0)
             {
-                CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = maxDegreeOfParallelism,
-            },
-            () => new ValidationWorker(workerConfig),
-            (tileId, _, worker) =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ValidateTile(
-                    worker.Reader,
-                    config.TileDir,
-                    tileId,
-                    transitLevel,
-                    worker.ProblemWays,
-                    worker.Stats,
-                    worker.Tweeners,
-                    cancellationToken);
-                if (worker.Reader.OverCommitted())
+                GraphTile? firstTile = discoveryReader.GetGraphTile(tileSet[0]);
+                if (firstTile is null)
                 {
-                    worker.Reader.Trim();
+                    throw new InvalidDataException(
+                        "The graph tile set contains an unreadable first tile.");
                 }
 
-                return worker;
-            },
-            completedWorkers.Add);
+                datasetId = firstTile.Header().DatasetId();
+            }
 
-        var tweeners = new EdgeBinner.Tweeners();
-        foreach (ValidationWorker worker in completedWorkers)
-        {
-            MergeWorkerStats(stats, worker.Stats);
-            MergeTweeners(tweeners, worker.Tweeners);
-            worker.Reader.Trim();
-        }
+            discoveryReader.Clear();
+            var completedWorkers = new ConcurrentBag<ValidationWorker>();
+            Parallel.ForEach(
+                tileSet,
+                new ParallelOptions
+                {
+                    CancellationToken = cancellationToken,
+                    MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                },
+                () => new ValidationWorker(workerConfig),
+                (tileId, _, worker) =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ValidateTile(
+                        worker.Reader,
+                        validationOutputDirectory,
+                        tileId,
+                        transitLevel,
+                        worker.ProblemWays,
+                        worker.Stats,
+                        worker.Tweeners,
+                        cancellationToken);
+                    if (worker.Reader.OverCommitted())
+                    {
+                        worker.Reader.Trim();
+                    }
 
-        for (var level = 0; level < stats.Densities.Length; level++)
-        {
-            stats.Densities[level].Sort();
-        }
+                    return worker;
+                },
+                completedWorkers.Add);
 
-        stopwatch.Stop();
-        stats.RecordStageDuration("tiles", stopwatch.Elapsed);
-        stopwatch.Restart();
-
-        discoveryReader.Trim();
-        byte localLevel = TileHierarchy.Levels()[^1].Level;
-        foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var tweenTileId = new GraphId(tw.Key);
-            GraphTile? tile = GraphTile.Create(config.TileDir, tweenTileId);
-            if (tile is null)
+            var tweeners = new EdgeBinner.Tweeners();
+            foreach (ValidationWorker worker in completedWorkers)
             {
-                var empty = new GraphTileBuilder(tweenTileId);
-                empty.HeaderBuilder.SetDatasetId(datasetId);
-                empty.StoreTileData(config.TileDir);
-                tile = GraphTile.Create(config.TileDir, tweenTileId);
+                MergeWorkerStats(stats, worker.Stats);
+                MergeTweeners(tweeners, worker.Tweeners);
+                worker.Reader.Trim();
+            }
+
+            PublishValidatedTiles(
+                validationOutputDirectory,
+                config.TileDir,
+                cancellationToken);
+
+            for (var level = 0; level < stats.Densities.Length; level++)
+            {
+                stats.Densities[level].Sort();
+            }
+
+            stopwatch.Stop();
+            stats.RecordStageDuration("tiles", stopwatch.Elapsed);
+            stopwatch.Restart();
+
+            discoveryReader.Trim();
+            byte localLevel = TileHierarchy.Levels()[^1].Level;
+            foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var tweenTileId = new GraphId(tw.Key);
+                GraphTile? tile = GraphTile.Create(config.TileDir, tweenTileId);
                 if (tile is null)
+                {
+                    var empty = new GraphTileBuilder(tweenTileId);
+                    empty.HeaderBuilder.SetDatasetId(datasetId);
+                    empty.StoreTileData(config.TileDir);
+                    tile = GraphTile.Create(config.TileDir, tweenTileId);
+                    if (tile is null)
+                    {
+                        continue;
+                    }
+                }
+
+                if (tile.Id().Level() != localLevel)
                 {
                     continue;
                 }
+
+                EdgeBinner.SortBins(tw.Value);
+                EdgeBinner.AddBins(config.TileDir, tile, tw.Value);
             }
 
-            if (tile.Id().Level() != localLevel)
-            {
-                continue;
-            }
+            stopwatch.Stop();
+            stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
+            stopwatch.Restart();
 
-            EdgeBinner.SortBins(tw.Value);
-            EdgeBinner.AddBins(config.TileDir, tile, tw.Value);
+            GraphTileChecksum.RefreshTilesetFiles(config.TileDir, cancellationToken);
+            stopwatch.Stop();
+            stats.RecordStageDuration("checksums", stopwatch.Elapsed);
+            return stats;
+        }
+        finally
+        {
+            DeleteParallelValidationOutputDirectory(validationOutputDirectory);
+        }
+    }
+
+    private static string CreateParallelValidationOutputDirectory(string tileDirectory)
+    {
+        string fullTileDirectory = Path.GetFullPath(tileDirectory);
+        string? parentDirectory = Path.GetDirectoryName(fullTileDirectory);
+        if (parentDirectory is null)
+        {
+            throw new InvalidDataException("The graph tile directory has no parent directory.");
         }
 
-        stopwatch.Stop();
-        stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
-        stopwatch.Restart();
+        string directoryName = Path.GetFileName(fullTileDirectory);
+        string outputDirectory = Path.Combine(
+            parentDirectory,
+            $".{directoryName}.validation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        return outputDirectory;
+    }
 
-        GraphTileChecksum.RefreshTilesetFiles(config.TileDir, cancellationToken);
-        stopwatch.Stop();
-        stats.RecordStageDuration("checksums", stopwatch.Elapsed);
-        return stats;
+    private static void PublishValidatedTiles(
+        string validationOutputDirectory,
+        string tileDirectory,
+        CancellationToken cancellationToken)
+    {
+        string[] validatedTilePaths = Directory
+            .EnumerateFiles(validationOutputDirectory, "*.gph", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        foreach (string validatedTilePath in validatedTilePaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string relativePath = Path.GetRelativePath(
+                validationOutputDirectory,
+                validatedTilePath);
+            string targetPath = Path.Combine(tileDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            File.Move(validatedTilePath, targetPath, overwrite: true);
+        }
+    }
+
+    private static void DeleteParallelValidationOutputDirectory(string outputDirectory)
+    {
+        if (Directory.Exists(outputDirectory))
+        {
+            Directory.Delete(outputDirectory, recursive: true);
+        }
     }
 
     private static void MergeWorkerStats(

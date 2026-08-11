@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using SharpNinja.Valhalla.Generation.Storage;
 using Xunit;
 
@@ -22,6 +24,92 @@ public sealed class IntermediateSequenceStoreTests
         Assert.Equal(records, mapped.Records);
         Assert.Equal(memory.Manifest.ContentSha256, mapped.Manifest.ContentSha256);
         Assert.Equal(memory.Manifest.RecordCount, mapped.Manifest.RecordCount);
+    }
+
+    [Theory]
+    [InlineData(IntermediateStorageMode.Memory)]
+    [InlineData(IntermediateStorageMode.MemoryMapped)]
+    public async Task BatchedRead_CrossesSegmentsWithoutChangingStableOrder(
+        IntermediateStorageMode mode)
+    {
+        TestRecord[] records = CreateRecords();
+        string directory = CreateTempDirectory();
+        try
+        {
+            using var store = new IntermediateSequenceStore<TestRecord>(
+                new IntermediateSequenceStoreOptions(
+                    directory,
+                    "batched-read",
+                    mode,
+                    MemoryBudgetBytes: 1024,
+                    ScratchDiskBudgetBytes: 4096,
+                    SegmentSizeBytes: 32));
+            foreach (TestRecord record in records)
+            {
+                store.Append(record);
+            }
+
+            await store.CompleteAsync(TestContext.Current.CancellationToken);
+            TestRecord sentinel = new(-1, -1, -1);
+            TestRecord[] destination = Enumerable.Repeat(sentinel, 6).ToArray();
+
+            store.ReadRange(1, destination, 1, 4);
+
+            Assert.Equal(sentinel, destination[0]);
+            Assert.Equal(records[1..5], destination[1..5]);
+            Assert.Equal(sentinel, destination[5]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BatchedRead_PackedRecordsMatchScalarMappedReads()
+    {
+        PackedRecord[] records = Enumerable.Range(0, 5000)
+            .Select(index => new PackedRecord(
+                index % 3,
+                index * 17L,
+                index,
+                checked((ulong)(index * 31L)),
+                index + 0.125,
+                -index - 0.875,
+                index * 43L,
+                index % 997))
+            .ToArray();
+        string directory = CreateTempDirectory();
+        try
+        {
+            using var store = new IntermediateSequenceStore<PackedRecord>(
+                new IntermediateSequenceStoreOptions(
+                    directory,
+                    "packed-batched-read",
+                    IntermediateStorageMode.MemoryMapped,
+                    MemoryBudgetBytes: 1024,
+                    ScratchDiskBudgetBytes: 4 * 1024 * 1024,
+                    SegmentSizeBytes: 64 * 1024));
+            foreach (PackedRecord record in records)
+            {
+                store.Append(record);
+            }
+
+            await store.CompleteAsync(TestContext.Current.CancellationToken);
+            PackedRecord[] scalar = Enumerable.Range(0, records.Length)
+                .Select(index => store.Read(index))
+                .ToArray();
+            var batched = new PackedRecord[records.Length];
+
+            store.ReadRange(0, batched, 0, batched.Length);
+
+            Assert.Equal(records, scalar);
+            Assert.Equal(records, batched);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -165,6 +253,17 @@ public sealed class IntermediateSequenceStoreTests
         Directory.CreateDirectory(directory);
         return directory;
     }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private readonly record struct PackedRecord(
+        int FileOrdinal,
+        long BlockOrdinal,
+        int EntityOrdinal,
+        ulong Id,
+        double Latitude,
+        double Longitude,
+        long PayloadOffset,
+        int PayloadLength);
 
     private readonly record struct TestRecord(long Key, int InputOrdinal, int Value);
 }

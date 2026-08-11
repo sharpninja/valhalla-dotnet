@@ -426,6 +426,15 @@ public sealed class GraphValidationParityTests
     }
 
     [Fact]
+    public void ParallelValidation_CrossTileReadWriteStressIsRaceFree()
+    {
+        for (var iteration = 0; iteration < 32; iteration++)
+        {
+            ParallelValidation_MatchesSerialOutput();
+        }
+    }
+
+    [Fact]
     public void TweenOnlyTiles_PreserveDatasetIdentity()
     {
         const ulong datasetId = 123456789;

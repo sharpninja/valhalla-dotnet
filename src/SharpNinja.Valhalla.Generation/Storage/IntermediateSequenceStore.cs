@@ -173,6 +173,64 @@ public sealed class IntermediateSequenceStore<T> : IIntermediateSequenceStore<T>
         return segments[segmentOrdinal].Read(segmentIndex);
     }
 
+    public void ReadRange(
+        long index,
+        T[] destination,
+        int destinationIndex,
+        int count)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfNegative(destinationIndex);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (index > recordCount || count > recordCount - index)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(count),
+                "The requested range exceeds the intermediate sequence.");
+        }
+
+        if (destinationIndex > destination.Length ||
+            count > destination.Length - destinationIndex)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(destinationIndex),
+                "The requested range exceeds the destination array.");
+        }
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        if (activeStorageMode == IntermediateStorageMode.Memory)
+        {
+            memoryRecords!
+                .AsSpan()
+                .Slice(checked((int)index), count)
+                .CopyTo(destination.AsSpan(destinationIndex, count));
+            return;
+        }
+
+        long sourceIndex = index;
+        int writeIndex = destinationIndex;
+        int remaining = count;
+        while (remaining > 0)
+        {
+            var segmentOrdinal = checked((int)(sourceIndex / recordsPerSegment));
+            var segmentIndex = checked((int)(sourceIndex % recordsPerSegment));
+            Segment segment = segments[segmentOrdinal];
+            int readable = checked((int)Math.Min(
+                remaining,
+                segment.RecordCount - segmentIndex));
+            segment.ReadRange(segmentIndex, destination, writeIndex, readable);
+            sourceIndex += readable;
+            writeIndex += readable;
+            remaining -= readable;
+        }
+    }
+
     public async ValueTask<IntermediateSequenceManifest> CompleteAsync(
         CancellationToken cancellationToken = default)
     {
@@ -465,6 +523,72 @@ public sealed class IntermediateSequenceStore<T> : IIntermediateSequenceStore<T>
             }
 
             return MemoryMarshal.Read<T>(bytes);
+        }
+
+        public void ReadRange(
+            int index,
+            T[] destination,
+            int destinationIndex,
+            int count)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            ArgumentOutOfRangeException.ThrowIfNegative(index);
+            ArgumentOutOfRangeException.ThrowIfNegative(destinationIndex);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            if ((long)index + count > RecordCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(count),
+                    "The requested range exceeds the intermediate segment.");
+            }
+
+            if (destinationIndex > destination.Length ||
+                count > destination.Length - destinationIndex)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(destinationIndex),
+                    "The requested range exceeds the destination array.");
+            }
+
+            if (count == 0)
+            {
+                return;
+            }
+
+            var offset = checked((long)index * recordSize);
+            if (view is not null)
+            {
+                int read = view.ReadArray(
+                    offset,
+                    destination,
+                    destinationIndex,
+                    count);
+                if (read != count)
+                {
+                    throw new EndOfStreamException(
+                        "Intermediate sequence range is truncated.");
+                }
+
+                return;
+            }
+
+            Span<byte> bytes = MemoryMarshal.AsBytes(
+                destination.AsSpan(destinationIndex, count));
+            int totalRead = 0;
+            while (totalRead < bytes.Length)
+            {
+                int read = RandomAccess.Read(
+                    stream.SafeFileHandle,
+                    bytes[totalRead..],
+                    offset + totalRead);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException(
+                        "Intermediate sequence range is truncated.");
+                }
+
+                totalRead += read;
+            }
         }
 
         public async ValueTask FlushAsync(CancellationToken cancellationToken)

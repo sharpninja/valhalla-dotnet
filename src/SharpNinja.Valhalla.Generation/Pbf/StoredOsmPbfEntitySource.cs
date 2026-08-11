@@ -13,6 +13,7 @@ namespace SharpNinja.Valhalla.Generation.Pbf;
 public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
 {
     private const int StoreCount = 4;
+    private const int ReplayRecordBatchSize = 4096;
     private readonly IntermediateSequenceStore<StoredEntityRecord> nodes;
     private readonly IntermediateSequenceStore<StoredEntityRecord> ways;
     private readonly IntermediateSequenceStore<StoredEntityRecord> relations;
@@ -167,29 +168,46 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         long count = fileCounts[fileOrdinal, kindIndex];
         byte[] replayBuffer = ArrayPool<byte>.Shared.Rent(
             Math.Max(1, maximumPayloadLengths[kindIndex]));
+        StoredEntityRecord[] recordBuffer =
+            ArrayPool<StoredEntityRecord>.Shared.Rent(
+                Math.Max(
+                    1,
+                    checked((int)Math.Min(count, ReplayRecordBatchSize))));
         var transientTags = new OsmPbfTransientTagDictionary();
         try
         {
-            for (long index = 0; index < count; index++)
+            long processed = 0;
+            while (processed < count)
             {
-                if ((index & 4095) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+                int batchCount = checked((int)Math.Min(
+                    count - processed,
+                    ReplayRecordBatchSize));
+                store.ReadRange(
+                    start + processed,
+                    recordBuffer,
+                    destinationIndex: 0,
+                    batchCount);
+
+                for (var batchIndex = 0; batchIndex < batchCount; batchIndex++)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    StoredEntityRecord record = recordBuffer[batchIndex];
+                    var reference = new IntermediateBlobReference(
+                        record.PayloadOffset,
+                        record.PayloadLength);
+                    Span<byte> payload = replayBuffer.AsSpan(
+                        0,
+                        record.PayloadLength);
+                    payloads.Read(reference, payload);
+                    Replay(pass, record, payload, visitor, transientTags);
                 }
 
-                StoredEntityRecord record = store.Read(start + index);
-                var reference = new IntermediateBlobReference(
-                    record.PayloadOffset,
-                    record.PayloadLength);
-                Span<byte> payload = replayBuffer.AsSpan(
-                    0,
-                    record.PayloadLength);
-                payloads.Read(reference, payload);
-                Replay(pass, record, payload, visitor, transientTags);
+                processed += batchCount;
             }
         }
         finally
         {
+            ArrayPool<StoredEntityRecord>.Shared.Return(recordBuffer);
             ArrayPool<byte>.Shared.Return(replayBuffer);
         }
 

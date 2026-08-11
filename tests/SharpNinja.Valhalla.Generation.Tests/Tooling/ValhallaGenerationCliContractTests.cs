@@ -236,7 +236,11 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
             error,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(ValhallaGenerationCliExitCodes.Success, exitCode);
+        if (exitCode != ValhallaGenerationCliExitCodes.Success)
+        {
+            Assert.Fail($"Standard output:{Environment.NewLine}{output}{Environment.NewLine}Standard error:{Environment.NewLine}{error}");
+        }
+
         Assert.Empty(error.ToString());
         string receiptLine = output
             .ToString()
