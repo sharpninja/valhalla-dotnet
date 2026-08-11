@@ -41,5 +41,6 @@
        suite in this repo. -->
   <ItemGroup>
     <InternalsVisibleTo Include="SharpNinja.Valhalla.Tests" />
+    <InternalsVisibleTo Include="SharpNinja.Valhalla.Generation" />
   </ItemGroup>
 </Project>

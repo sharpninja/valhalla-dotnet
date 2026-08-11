@@ -51,33 +51,6 @@ public sealed class PbfGraphParser
     private const byte UnlimitedSpeedLimit = byte.MaxValue;
     private const float MaxAssumedSpeed = 140.0f;
 
-    private static readonly IReadOnlyDictionary<string, RestrictionType> RestrictionTypes =
-        new Dictionary<string, RestrictionType>(StringComparer.Ordinal)
-        {
-            ["no_left_turn"] = RestrictionType.NoLeftTurn,
-            ["no_right_turn"] = RestrictionType.NoRightTurn,
-            ["no_straight_on"] = RestrictionType.NoStraightOn,
-            ["no_u_turn"] = RestrictionType.NoUTurn,
-            ["only_right_turn"] = RestrictionType.OnlyRightTurn,
-            ["only_left_turn"] = RestrictionType.OnlyLeftTurn,
-            ["only_straight_on"] = RestrictionType.OnlyStraightOn,
-            ["no_entry"] = RestrictionType.NoEntry,
-            ["no_exit"] = RestrictionType.NoExit,
-            ["no_turn"] = RestrictionType.NoTurn,
-        };
-
-    private static readonly string[] TypeSpecificRestrictionKeys =
-    {
-        "restriction:hgv",
-        "restriction:emergency",
-        "restriction:taxi",
-        "restriction:motorcar",
-        "restriction:bus",
-        "restriction:bicycle",
-        "restriction:hazmat",
-        "restriction:motorcycle",
-        "restriction:foot",
-    };
 
     // kMaxMtbScale / kMaxMtbUphillScale from graphconstants.h.
     private const int MaxMtbScale = 6;
@@ -167,9 +140,7 @@ public sealed class PbfGraphParser
         _useUrbanTag = options.UseUrbanTag;
         _useRestArea = options.UseRestArea;
 
-        var emptyNodeTags = new Dictionary<string, string>(StringComparer.Ordinal);
-        NodeTagTransform.Transform(emptyNodeTags);
-        _emptyNodeTags = emptyNodeTags;
+        _emptyNodeTags = OsmNodeSemanticTransformer.CreateEmptyTransformedTags();
     }
 
     /// <summary>Elapsed time for each semantic PBF pass in the most recent parse.</summary>
@@ -326,30 +297,10 @@ public sealed class PbfGraphParser
         ReadOnlySpan<ulong> nodeRefs,
         IReadOnlyDictionary<string, string> rawTags)
     {
-        // Do not add ways with < 2 nodes.
-        if (nodeRefs.Length < 2)
-        {
-            return;
-        }
-
-        // Throw away closed features with building/landuse/leisure/natural tags.
-        if (nodeRefs[0] == nodeRefs[^1])
-        {
-            foreach (KeyValuePair<string, string> tag in rawTags)
-            {
-                if (tag.Key is "building" or "landuse" or "leisure" or "natural")
-                {
-                    return;
-                }
-            }
-        }
-
-        // Apply the Lua way tag transform. Empty tags -> the empty transform -> dropped.
-        Dictionary<string, string> tags =
-            rawTags as OsmPbfTransientTagDictionary ??
-            new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
-        int filter = WayTagTransform.Transform(tags);
-        if (filter != 0 || tags.Count == 0)
+        if (!OsmWaySemanticTransformer.TryTransform(
+                nodeRefs,
+                rawTags,
+                out IReadOnlyDictionary<string, string>? tags))
         {
             return;
         }
@@ -709,19 +660,8 @@ public sealed class PbfGraphParser
         // C# code skipped the transform for untagged nodes, leaving access_mask absent so the node's
         // access stayed 0; that made every plain intersection node un-routable (Allowed(NodeInfo)
         // failed), trapping the bidirectional A* search.
-        IReadOnlyDictionary<string, string> tags;
-        if (rawTags.Count == 0)
-        {
-            tags = _emptyNodeTags;
-        }
-        else
-        {
-            Dictionary<string, string> transformedTags =
-                rawTags as OsmPbfTransientTagDictionary ??
-                new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
-            NodeTagTransform.Transform(transformedTags);
-            tags = transformedTags;
-        }
+        IReadOnlyDictionary<string, string> tags =
+            OsmNodeSemanticTransformer.Transform(rawTags, _emptyNodeTags);
 
         bool isHighwayJunction = tags.TryGetValue("highway", out string? hw) && hw == "motorway_junction";
         bool maybeNamedJunction = tags.TryGetValue("junction", out string? jn) && (jn == "named" || jn == "yes");
@@ -961,153 +901,10 @@ public sealed class PbfGraphParser
 
     private static bool TryNormalizeRestrictionRelationTags(
         IReadOnlyDictionary<string, string> rawTags,
-        out IReadOnlyDictionary<string, string> normalizedTags)
-    {
-        normalizedTags = rawTags;
-
-        rawTags.TryGetValue("type", out string? relationType);
-        bool hasRestrictionTag = rawTags.ContainsKey("restriction") ||
-                                 rawTags.ContainsKey("restriction:conditional") ||
-                                 rawTags.ContainsKey("restriction:probable") ||
-                                 TypeSpecificRestrictionKeys.Any(rawTags.ContainsKey);
-        if (!hasRestrictionTag)
-        {
-            return true;
-        }
-
-        if (relationType is not ("restriction" or "route"))
-        {
-            return false;
-        }
-
-        bool hasConditional = rawTags.TryGetValue("restriction:conditional", out string? conditionalValue);
-        bool hasProbable = rawTags.TryGetValue("restriction:probable", out string? probableValue);
-        if (relationType != "restriction" && !hasConditional && !hasProbable)
-        {
-            return false;
-        }
-
-        var tags = new Dictionary<string, string>(rawTags, StringComparer.Ordinal);
-        if (hasProbable && (tags.ContainsKey("restriction") || hasConditional))
-        {
-            tags.Remove("restriction:probable");
-            hasProbable = false;
-            probableValue = null;
-        }
-
-        RestrictionType? genericType = null;
-        if (tags.TryGetValue("restriction", out string? restrictionValue) &&
-            TryParseRestrictionType(restrictionValue, out RestrictionType parsedGenericType))
-        {
-            genericType = parsedGenericType;
-        }
-        else if (hasConditional &&
-                 TrySplitQualifiedRestriction(conditionalValue!, out string conditionalPrefix, out _) &&
-                 TryParseRestrictionType(conditionalPrefix, out parsedGenericType))
-        {
-            genericType = parsedGenericType;
-        }
-        else if (hasProbable &&
-                 TrySplitQualifiedRestriction(probableValue!, out string probablePrefix, out _) &&
-                 TryParseRestrictionType(probablePrefix, out parsedGenericType))
-        {
-            genericType = parsedGenericType;
-        }
-
-        RestrictionType? typeSpecificType = null;
-        foreach (string key in TypeSpecificRestrictionKeys)
-        {
-            if (!tags.TryGetValue(key, out string? value))
-            {
-                continue;
-            }
-
-            if (TryParseRestrictionType(value, out RestrictionType parsedType))
-            {
-                tags[key] = ((byte)parsedType).ToString(CultureInfo.InvariantCulture);
-                typeSpecificType ??= parsedType;
-            }
-            else
-            {
-                tags.Remove(key);
-            }
-        }
-
-        RestrictionType? effectiveType = typeSpecificType ?? genericType;
-        if (effectiveType is null)
-        {
-            return false;
-        }
-
-        if (hasConditional)
-        {
-            if (!TrySplitQualifiedRestriction(conditionalValue!, out _, out string conditionalSuffix))
-            {
-                return false;
-            }
-
-            tags["restriction:conditional"] = conditionalSuffix;
-        }
-
-        if (hasProbable)
-        {
-            if (!TrySplitQualifiedRestriction(probableValue!, out _, out string probableSuffix))
-            {
-                return false;
-            }
-
-            tags["restriction:probable"] = probableSuffix;
-        }
-
-        if (typeSpecificType is null)
-        {
-            tags["restriction"] = ((byte)effectiveType.Value).ToString(CultureInfo.InvariantCulture);
-        }
-        else
-        {
-            tags.Remove("restriction");
-        }
-
-        normalizedTags = tags;
-        return true;
-    }
-
-    private static bool TryParseRestrictionType(string value, out RestrictionType type)
-    {
-        string candidate = value.Trim();
-        if (RestrictionTypes.TryGetValue(candidate, out type))
-        {
-            return true;
-        }
-
-        if (byte.TryParse(candidate, NumberStyles.None, CultureInfo.InvariantCulture, out byte numericValue) &&
-            numericValue <= (byte)RestrictionType.NoTurn)
-        {
-            type = (RestrictionType)numericValue;
-            return true;
-        }
-
-        type = default;
-        return false;
-    }
-
-    private static bool TrySplitQualifiedRestriction(
-        string value,
-        out string restriction,
-        out string qualifier)
-    {
-        int separator = value.IndexOf('@', StringComparison.Ordinal);
-        if (separator <= 0 || separator >= value.Length - 1)
-        {
-            restriction = string.Empty;
-            qualifier = string.Empty;
-            return false;
-        }
-
-        restriction = value[..separator].Trim();
-        qualifier = value[(separator + 1)..].Trim();
-        return restriction.Length != 0 && qualifier.Length != 0;
-    }
+        out IReadOnlyDictionary<string, string> normalizedTags) =>
+        OsmRelationSemanticTransformer.TryNormalizeRestrictionTags(
+            rawTags,
+            out normalizedTags);
 
     private void Relation(ulong osmid, IReadOnlyList<OsmRelationMember> members, IReadOnlyDictionary<string, string> rawTags)
     {
