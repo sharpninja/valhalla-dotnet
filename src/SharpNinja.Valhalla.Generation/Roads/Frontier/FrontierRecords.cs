@@ -112,6 +112,23 @@ internal readonly record struct GenerationRelationMemberRecord(
     int MemberOrdinal,
     long CanonicalOrdinal);
 
+internal readonly record struct GenerationRestrictionRecord(
+    long OsmRelationId,
+    long FromWayId,
+    long ToWayId,
+    long ViaOffset,
+    int ViaCount,
+    long TagReference,
+    long CanonicalOrdinal);
+
+internal readonly record struct GenerationRestrictionViaRecord(
+    long OsmRelationId,
+    long MemberId,
+    OsmMemberType MemberType,
+    int ViaOrdinal,
+    long CanonicalOrdinal);
+
+
 internal readonly record struct GenerationGraphNodeCandidate(
     GenerationNodeRecord Node,
     GraphId TileBase,

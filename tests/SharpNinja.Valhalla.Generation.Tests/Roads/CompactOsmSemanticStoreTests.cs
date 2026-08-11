@@ -120,6 +120,206 @@ public sealed class CompactOsmSemanticStoreTests
         }
     }
 
+    [Fact]
+    public async Task BuildAsync_PersistsArrayFreeRestrictionRecordsWithoutManagedViaArrays()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore store =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new SemanticFixtureSource(),
+                    CreateOptions(root),
+                    TestContext.Current.CancellationToken);
+
+            Assert.False(
+                System.Runtime.CompilerServices.RuntimeHelpers
+                    .IsReferenceOrContainsReferences<GenerationRestrictionRecord>());
+            Assert.False(
+                System.Runtime.CompilerServices.RuntimeHelpers
+                    .IsReferenceOrContainsReferences<GenerationRestrictionViaRecord>());
+            Assert.Equal(1, store.RestrictionCount);
+            Assert.Equal(1, store.RestrictionViaCount);
+
+            GenerationRestrictionRecord restriction = store.ReadRestriction(0);
+            Assert.Equal(20, restriction.OsmRelationId);
+            Assert.Equal(10, restriction.FromWayId);
+            Assert.Equal(12, restriction.ToWayId);
+            Assert.Equal(0, restriction.ViaOffset);
+            Assert.Equal(1, restriction.ViaCount);
+            Assert.Equal(
+                ((byte)RestrictionType.NoLeftTurn).ToString(),
+                store.ReadTags(restriction.TagReference)["restriction"]);
+
+            GenerationRestrictionViaRecord via = store.ReadRestrictionVia(0);
+            Assert.Equal(20, via.OsmRelationId);
+            Assert.Equal(2, via.MemberId);
+            Assert.Equal(OsmMemberType.Node, via.MemberType);
+            Assert.Equal(0, via.ViaOrdinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+
+    [Fact]
+    public async Task BuildAsync_RelationFileOrderingDoesNotChangeDurableRestrictionRecords()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore relationFirst =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new SplitRestrictionSource(relationBeforeWays: true),
+                    CreateOptions(Path.Combine(root, "relation-first")),
+                    TestContext.Current.CancellationToken);
+            using CompactOsmSemanticStore waysFirst =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new SplitRestrictionSource(relationBeforeWays: false),
+                    CreateOptions(Path.Combine(root, "ways-first")),
+                    TestContext.Current.CancellationToken);
+
+            Assert.Equal(relationFirst.ReadRestriction(0), waysFirst.ReadRestriction(0));
+            Assert.Equal(relationFirst.ReadRestrictionVia(0), waysFirst.ReadRestrictionVia(0));
+            Assert.Equal(
+                relationFirst.ReadTags(relationFirst.ReadRestriction(0).TagReference),
+                waysFirst.ReadTags(waysFirst.ReadRestriction(0).TagReference));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class SplitRestrictionSource(bool relationBeforeWays) : IOsmPbfEntitySource
+    {
+        public int FileCount => 2;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int relationFile = relationBeforeWays ? 0 : 1;
+            int wayFile = relationBeforeWays ? 1 : 0;
+            if (pass == OsmPbfEntityPass.Ways && fileOrdinal == wayFile)
+            {
+                visitor.Way(10, [1UL, 2UL], RoadTags());
+                visitor.Way(12, [2UL, 3UL], RoadTags());
+            }
+            else if (pass == OsmPbfEntityPass.Relations && fileOrdinal == relationFile)
+            {
+                visitor.Relation(
+                    20,
+                    [
+                        new OsmRelationMember(10, OsmMemberType.Way, "from"),
+                        new OsmRelationMember(2, OsmMemberType.Node, "via"),
+                        new OsmRelationMember(12, OsmMemberType.Way, "to"),
+                    ],
+                    RestrictionTags());
+            }
+            else if (pass == OsmPbfEntityPass.Nodes && fileOrdinal == wayFile)
+            {
+                visitor.Node(1, 36.10, -86.70, EmptyTags());
+                visitor.Node(2, 36.11, -86.71, EmptyTags());
+                visitor.Node(3, 36.12, -86.72, EmptyTags());
+            }
+        }
+
+        private static IReadOnlyDictionary<string, string> RoadTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["highway"] = "residential",
+            };
+
+        private static IReadOnlyDictionary<string, string> RestrictionTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["type"] = "restriction",
+                ["restriction"] = "no_left_turn",
+            };
+
+        private static IReadOnlyDictionary<string, string> EmptyTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
+
+    [Fact]
+    public async Task BuildAsync_RestrictionStructureMatrixPublishesOnlyCompleteDurableRecords()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore validComplex =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new RestrictionStructureSource(
+                        [
+                            new OsmRelationMember(10, OsmMemberType.Way, "from"),
+                            new OsmRelationMember(20, OsmMemberType.Way, "via"),
+                            new OsmRelationMember(21, OsmMemberType.Way, "via"),
+                            new OsmRelationMember(12, OsmMemberType.Way, "to"),
+                        ]),
+                    CreateOptions(Path.Combine(root, "valid-complex")),
+                    TestContext.Current.CancellationToken);
+            using CompactOsmSemanticStore invalidMixed =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new RestrictionStructureSource(
+                        [
+                            new OsmRelationMember(10, OsmMemberType.Way, "from"),
+                            new OsmRelationMember(2, OsmMemberType.Node, "via"),
+                            new OsmRelationMember(20, OsmMemberType.Way, "via"),
+                            new OsmRelationMember(12, OsmMemberType.Way, "to"),
+                        ]),
+                    CreateOptions(Path.Combine(root, "invalid-mixed")),
+                    TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, validComplex.RestrictionCount);
+            Assert.Equal(2, validComplex.RestrictionViaCount);
+            Assert.Equal(OsmMemberType.Way, validComplex.ReadRestrictionVia(0).MemberType);
+            Assert.Equal(OsmMemberType.Way, validComplex.ReadRestrictionVia(1).MemberType);
+            Assert.Equal(0, invalidMixed.RestrictionCount);
+            Assert.Equal(0, invalidMixed.RestrictionViaCount);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class RestrictionStructureSource(
+        IReadOnlyList<OsmRelationMember> members) : IOsmPbfEntitySource
+    {
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pass != OsmPbfEntityPass.Relations)
+            {
+                return;
+            }
+
+            visitor.Relation(
+                20,
+                members,
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["type"] = "restriction",
+                    ["restriction"] = "no_left_turn",
+                });
+        }
+    }
+
+
     private static CompactOsmSemanticStoreOptions CreateOptions(string root) =>
         new(
             root,

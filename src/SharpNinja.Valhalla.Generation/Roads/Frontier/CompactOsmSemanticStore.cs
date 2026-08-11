@@ -18,13 +18,15 @@ internal sealed record CompactOsmSemanticStoreOptions(
 
 internal sealed class CompactOsmSemanticStore : IDisposable
 {
-    private const int StorePartitionCount = 16;
-    private const int ReservedStorePartitions = 8;
+    private const int StorePartitionCount = 18;
+    private const int ReservedStorePartitions = 10;
     private readonly IntermediateSequenceStore<GenerationNodeRecord> nodes;
     private readonly IntermediateSequenceStore<GenerationWayRecord> ways;
     private readonly IntermediateSequenceStore<GenerationWayNodeReference> wayNodeReferences;
     private readonly IntermediateSequenceStore<GenerationRelationRecord> relations;
     private readonly IntermediateSequenceStore<GenerationRelationMemberRecord> relationMembers;
+    private readonly IntermediateSequenceStore<GenerationRestrictionRecord> restrictions;
+    private readonly IntermediateSequenceStore<GenerationRestrictionViaRecord> restrictionVias;
     private readonly IntermediateSequenceStore<NodeIncidenceRecord> incidenceInput;
     private readonly CompactOsmMetadataStore metadata;
     private readonly NodeIncidenceIndex incidenceIndex;
@@ -36,6 +38,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         IntermediateSequenceStore<GenerationWayNodeReference> wayNodeReferences,
         IntermediateSequenceStore<GenerationRelationRecord> relations,
         IntermediateSequenceStore<GenerationRelationMemberRecord> relationMembers,
+        IntermediateSequenceStore<GenerationRestrictionRecord> restrictions,
+        IntermediateSequenceStore<GenerationRestrictionViaRecord> restrictionVias,
         IntermediateSequenceStore<NodeIncidenceRecord> incidenceInput,
         CompactOsmMetadataStore metadata,
         NodeIncidenceIndex incidenceIndex)
@@ -45,6 +49,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         this.wayNodeReferences = wayNodeReferences;
         this.relations = relations;
         this.relationMembers = relationMembers;
+        this.restrictions = restrictions;
+        this.restrictionVias = restrictionVias;
         this.incidenceInput = incidenceInput;
         this.metadata = metadata;
         this.incidenceIndex = incidenceIndex;
@@ -59,6 +65,10 @@ internal sealed class CompactOsmSemanticStore : IDisposable
     internal long RelationCount => ReadCount(relations);
 
     internal long RelationMemberCount => ReadCount(relationMembers);
+
+    internal long RestrictionCount => ReadCount(restrictions);
+
+    internal long RestrictionViaCount => ReadCount(restrictionVias);
 
     internal long IncidenceCount
     {
@@ -89,6 +99,12 @@ internal sealed class CompactOsmSemanticStore : IDisposable
 
     internal GenerationRelationMemberRecord ReadRelationMember(long ordinal) =>
         Read(relationMembers, ordinal);
+
+    internal GenerationRestrictionRecord ReadRestriction(long ordinal) =>
+        Read(restrictions, ordinal);
+
+    internal GenerationRestrictionViaRecord ReadRestrictionVia(long ordinal) =>
+        Read(restrictionVias, ordinal);
 
     internal IReadOnlyDictionary<string, string> ReadTags(long tagReference)
     {
@@ -134,6 +150,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         IntermediateSequenceStore<GenerationWayNodeReference>? wayNodeReferences = null;
         IntermediateSequenceStore<GenerationRelationRecord>? relations = null;
         IntermediateSequenceStore<GenerationRelationMemberRecord>? relationMembers = null;
+        IntermediateSequenceStore<GenerationRestrictionRecord>? restrictions = null;
+        IntermediateSequenceStore<GenerationRestrictionViaRecord>? restrictionVias = null;
         IntermediateSequenceStore<NodeIncidenceRecord>? incidences = null;
         CompactOsmMetadataStore? metadata = null;
         NodeIncidenceIndex? incidenceIndex = null;
@@ -169,6 +187,18 @@ internal sealed class CompactOsmSemanticStore : IDisposable
                 options,
                 storeMemoryBudget,
                 storeScratchBudget);
+            restrictions = CreateStore<GenerationRestrictionRecord>(
+                root,
+                "canonical-restrictions",
+                options,
+                storeMemoryBudget,
+                storeScratchBudget);
+            restrictionVias = CreateStore<GenerationRestrictionViaRecord>(
+                root,
+                "canonical-restriction-vias",
+                options,
+                storeMemoryBudget,
+                storeScratchBudget);
             incidences = CreateStore<NodeIncidenceRecord>(
                 root,
                 "node-incidence-input",
@@ -190,6 +220,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
                 wayNodeReferences,
                 relations,
                 relationMembers,
+                restrictions,
+                restrictionVias,
                 incidences,
                 metadata);
             VisitPass(
@@ -209,6 +241,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
             await wayNodeReferences.CompleteAsync(cancellationToken).ConfigureAwait(false);
             await relations.CompleteAsync(cancellationToken).ConfigureAwait(false);
             await relationMembers.CompleteAsync(cancellationToken).ConfigureAwait(false);
+            await restrictions.CompleteAsync(cancellationToken).ConfigureAwait(false);
+            await restrictionVias.CompleteAsync(cancellationToken).ConfigureAwait(false);
             await incidences.CompleteAsync(cancellationToken).ConfigureAwait(false);
 
             incidenceIndex = await NodeIncidenceIndex.BuildAsync(
@@ -239,6 +273,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
                 wayNodeReferences,
                 relations,
                 relationMembers,
+                restrictions,
+                restrictionVias,
                 incidences,
                 metadata,
                 incidenceIndex);
@@ -247,6 +283,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
             wayNodeReferences = null;
             relations = null;
             relationMembers = null;
+            restrictions = null;
+            restrictionVias = null;
             incidences = null;
             metadata = null;
             incidenceIndex = null;
@@ -257,6 +295,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
             incidenceIndex?.Dispose();
             metadata?.Dispose();
             incidences?.Dispose();
+            restrictionVias?.Dispose();
+            restrictions?.Dispose();
             relationMembers?.Dispose();
             relations?.Dispose();
             wayNodeReferences?.Dispose();
@@ -276,6 +316,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         incidenceIndex.Dispose();
         metadata.Dispose();
         incidenceInput.Dispose();
+        restrictionVias.Dispose();
+        restrictions.Dispose();
         relationMembers.Dispose();
         relations.Dispose();
         wayNodeReferences.Dispose();
@@ -341,6 +383,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
             Unsafe.SizeOf<GenerationWayNodeReference>(),
             Unsafe.SizeOf<GenerationRelationRecord>(),
             Unsafe.SizeOf<GenerationRelationMemberRecord>(),
+            Unsafe.SizeOf<GenerationRestrictionRecord>(),
+            Unsafe.SizeOf<GenerationRestrictionViaRecord>(),
             Unsafe.SizeOf<NodeIncidenceRecord>(),
         }.Max();
         if (options.MemoryBudgetBytes / StorePartitionCount < largestRecord)
@@ -361,6 +405,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         IntermediateSequenceStore<GenerationWayNodeReference> wayNodeReferences,
         IntermediateSequenceStore<GenerationRelationRecord> relations,
         IntermediateSequenceStore<GenerationRelationMemberRecord> relationMembers,
+        IntermediateSequenceStore<GenerationRestrictionRecord> restrictions,
+        IntermediateSequenceStore<GenerationRestrictionViaRecord> restrictionVias,
         IntermediateSequenceStore<NodeIncidenceRecord> incidences,
         CompactOsmMetadataStore metadata)
     {
@@ -370,6 +416,8 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         private long wayNodeOrdinal;
         private long relationOrdinal;
         private long relationMemberOrdinal;
+        private long restrictionOrdinal;
+        private long restrictionViaOrdinal;
         private long incidenceOrdinal;
         private long? emptyNodeTagReference;
         private IntermediateSequenceStore<GenerationNodeRecord>? nodes;
@@ -464,6 +512,43 @@ internal sealed class CompactOsmSemanticStore : IDisposable
                     relationCanonicalOrdinal));
 
             bool restriction = IsRestriction(tags);
+            if (restriction &&
+                TryGetRestrictionStructure(
+                    members,
+                    out long fromWayId,
+                    out long toWayId,
+                    out int viaCount))
+            {
+                long viaOffset = restrictionViaOrdinal;
+                var viaOrdinal = 0;
+                foreach (OsmRelationMember member in members)
+                {
+                    if (!string.Equals(member.Role, "via", StringComparison.Ordinal) ||
+                        member.Type is not (OsmMemberType.Node or OsmMemberType.Way))
+                    {
+                        continue;
+                    }
+
+                    restrictionVias.Append(
+                        new GenerationRestrictionViaRecord(
+                            relationId,
+                            checked((long)member.Id),
+                            member.Type,
+                            viaOrdinal++,
+                            restrictionViaOrdinal++));
+                }
+
+                restrictions.Append(
+                    new GenerationRestrictionRecord(
+                        relationId,
+                        fromWayId,
+                        toWayId,
+                        viaOffset,
+                        viaCount,
+                        tagReference,
+                        restrictionOrdinal++));
+            }
+
             for (var memberOrdinal = 0; memberOrdinal < members.Count; memberOrdinal++)
             {
                 OsmRelationMember member = members[memberOrdinal];
@@ -555,6 +640,60 @@ internal sealed class CompactOsmSemanticStore : IDisposable
                     ToE7(longitude, nameof(longitude)),
                     GetNodeFlags(rawTags, tags),
                     tagReference));
+        }
+
+        private static bool TryGetRestrictionStructure(
+            IReadOnlyList<OsmRelationMember> members,
+            out long fromWayId,
+            out long toWayId,
+            out int viaCount)
+        {
+            fromWayId = 0;
+            toWayId = 0;
+            viaCount = 0;
+            OsmMemberType? viaType = null;
+
+            foreach (OsmRelationMember member in members)
+            {
+                if (string.Equals(member.Role, "from", StringComparison.Ordinal) &&
+                    member.Type == OsmMemberType.Way)
+                {
+                    fromWayId = checked((long)member.Id);
+                    continue;
+                }
+
+                if (string.Equals(member.Role, "to", StringComparison.Ordinal) &&
+                    member.Type == OsmMemberType.Way)
+                {
+                    if (toWayId == 0)
+                    {
+                        toWayId = checked((long)member.Id);
+                    }
+
+                    continue;
+                }
+
+                if (!string.Equals(member.Role, "via", StringComparison.Ordinal) ||
+                    member.Type is not (OsmMemberType.Node or OsmMemberType.Way))
+                {
+                    continue;
+                }
+
+                if ((viaType.HasValue && viaType.Value != member.Type) ||
+                    (member.Type == OsmMemberType.Node && viaCount != 0))
+                {
+                    return false;
+                }
+
+                viaType = member.Type;
+                viaCount++;
+                if (viaCount > OSMRestriction.MaxViasPerRestriction)
+                {
+                    return false;
+                }
+            }
+
+            return fromWayId != 0 && toWayId != 0 && viaCount != 0;
         }
 
         private static bool IsRestriction(IReadOnlyDictionary<string, string> tags)
