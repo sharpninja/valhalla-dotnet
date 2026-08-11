@@ -56,6 +56,8 @@ public interface IIntermediateBlobStore : IDisposable
 
     void Read(IntermediateBlobReference reference, Span<byte> destination);
 
+    void ReadRange(long offset, Span<byte> destination);
+
     ValueTask<IntermediateBlobManifest> CompleteAsync(
         CancellationToken cancellationToken = default);
 }
@@ -230,6 +232,24 @@ public sealed class IntermediateBlobStore : IIntermediateBlobStore
         }
 
         ReadThroughCache(reference.Offset, destination);
+    }
+
+    public void ReadRange(long offset, Span<byte> destination)
+    {
+        ThrowIfDisposed();
+        ValidateRange(offset, destination.Length);
+        if (destination.IsEmpty)
+        {
+            return;
+        }
+
+        if (activeStorageMode == IntermediateStorageMode.Memory)
+        {
+            memory.AsSpan(checked((int)offset), destination.Length).CopyTo(destination);
+            return;
+        }
+
+        ReadDirect(offset, destination);
     }
 
     public async ValueTask<IntermediateBlobManifest> CompleteAsync(
@@ -417,14 +437,19 @@ public sealed class IntermediateBlobStore : IIntermediateBlobStore
 
     private void ValidateReference(IntermediateBlobReference reference)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(reference.Offset);
         ArgumentOutOfRangeException.ThrowIfNegative(reference.Length);
-        if (reference.Offset > byteLength ||
-            reference.Length > byteLength - reference.Offset)
+        ValidateRange(reference.Offset, reference.Length);
+    }
+
+    private void ValidateRange(long offset, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (offset > byteLength || length > byteLength - offset)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(reference),
-                "The blob reference is outside the stored byte range.");
+                nameof(offset),
+                "The requested range is outside the stored byte range.");
         }
     }
 

@@ -25,6 +25,46 @@ public sealed class IntermediateBlobStoreTests
         Assert.Equal(memory.Manifest.ContentSha256, mapped.Manifest.ContentSha256);
     }
 
+    [Theory]
+    [InlineData(IntermediateStorageMode.Memory)]
+    [InlineData(IntermediateStorageMode.MemoryMapped)]
+    public async Task RangeRead_CrossesBlobAndSegmentBoundaries(
+        IntermediateStorageMode mode)
+    {
+        byte[][] payloads = Enumerable.Range(0, 12)
+            .Select(index => Enumerable
+                .Range(0, 11 + index)
+                .Select(value => checked((byte)(index + value)))
+                .ToArray())
+            .ToArray();
+        string directory = CreateTempDirectory();
+        try
+        {
+            using var store = new IntermediateBlobStore(
+                CreateOptions(
+                    directory,
+                    mode,
+                    memoryBudgetBytes: 1024,
+                    scratchBudgetBytes: 4096,
+                    segmentSizeBytes: 32));
+            IntermediateBlobReference[] references = payloads
+                .Select(payload => store.Append(payload))
+                .ToArray();
+            await store.CompleteAsync(TestContext.Current.CancellationToken);
+            long offset = references[1].Offset;
+            long end = references[^2].Offset + references[^2].Length;
+            byte[] destination = GC.AllocateUninitializedArray<byte>(checked((int)(end - offset)));
+
+            store.ReadRange(offset, destination);
+
+            Assert.Equal(payloads[1..^1].SelectMany(static value => value), destination);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task AutoMode_SpillsBeforeMemoryBudgetIsExceeded()
     {

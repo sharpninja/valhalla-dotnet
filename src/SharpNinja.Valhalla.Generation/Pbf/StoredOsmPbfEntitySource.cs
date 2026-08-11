@@ -14,6 +14,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
 {
     private const int StoreCount = 4;
     private const int ReplayRecordBatchSize = 4096;
+    private const int MaxReplayPayloadBatchBytes = 8 * 1024 * 1024;
     private readonly IntermediateSequenceStore<StoredEntityRecord> nodes;
     private readonly IntermediateSequenceStore<StoredEntityRecord> ways;
     private readonly IntermediateSequenceStore<StoredEntityRecord> relations;
@@ -166,7 +167,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         }
 
         long count = fileCounts[fileOrdinal, kindIndex];
-        byte[] replayBuffer = ArrayPool<byte>.Shared.Rent(
+        byte[] payloadBuffer = ArrayPool<byte>.Shared.Rent(
             Math.Max(1, maximumPayloadLengths[kindIndex]));
         StoredEntityRecord[] recordBuffer =
             ArrayPool<StoredEntityRecord>.Shared.Rent(
@@ -189,16 +190,61 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
                     destinationIndex: 0,
                     batchCount);
 
+                long payloadBatchOffset = recordBuffer[0].PayloadOffset;
+                long payloadBatchEnd = payloadBatchOffset;
+                bool isMonotonicPayloadBatch = true;
                 for (var batchIndex = 0; batchIndex < batchCount; batchIndex++)
                 {
                     StoredEntityRecord record = recordBuffer[batchIndex];
-                    var reference = new IntermediateBlobReference(
-                        record.PayloadOffset,
-                        record.PayloadLength);
-                    Span<byte> payload = replayBuffer.AsSpan(
-                        0,
-                        record.PayloadLength);
-                    payloads.Read(reference, payload);
+                    if (record.PayloadOffset < payloadBatchEnd)
+                    {
+                        isMonotonicPayloadBatch = false;
+                        break;
+                    }
+
+                    payloadBatchEnd = checked(record.PayloadOffset + record.PayloadLength);
+                }
+
+                long payloadBatchLength = payloadBatchEnd - payloadBatchOffset;
+                bool usePayloadBatch = isMonotonicPayloadBatch &&
+                    payloadBatchLength >= 0 &&
+                    payloadBatchLength <= MaxReplayPayloadBatchBytes;
+                if (usePayloadBatch)
+                {
+                    int requiredLength = checked((int)payloadBatchLength);
+                    if (payloadBuffer.Length < requiredLength)
+                    {
+                        ArrayPool<byte>.Shared.Return(payloadBuffer);
+                        payloadBuffer = ArrayPool<byte>.Shared.Rent(requiredLength);
+                    }
+
+                    payloads.ReadRange(
+                        payloadBatchOffset,
+                        payloadBuffer.AsSpan(0, requiredLength));
+                }
+
+                for (var batchIndex = 0; batchIndex < batchCount; batchIndex++)
+                {
+                    StoredEntityRecord record = recordBuffer[batchIndex];
+                    Span<byte> payload;
+                    if (usePayloadBatch)
+                    {
+                        int payloadOffset = checked((int)(
+                            record.PayloadOffset - payloadBatchOffset));
+                        payload = payloadBuffer.AsSpan(
+                            payloadOffset,
+                            record.PayloadLength);
+                    }
+                    else
+                    {
+                        payload = payloadBuffer.AsSpan(0, record.PayloadLength);
+                        payloads.Read(
+                            new IntermediateBlobReference(
+                                record.PayloadOffset,
+                                record.PayloadLength),
+                            payload);
+                    }
+
                     Replay(pass, record, payload, visitor, transientTags);
                 }
 
@@ -208,7 +254,7 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         finally
         {
             ArrayPool<StoredEntityRecord>.Shared.Return(recordBuffer);
-            ArrayPool<byte>.Shared.Return(replayBuffer);
+            ArrayPool<byte>.Shared.Return(payloadBuffer);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
