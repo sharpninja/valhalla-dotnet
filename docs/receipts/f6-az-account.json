@@ -1,0 +1,16 @@
+{
+  "environmentName": "AzureCloud",
+  "homeTenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+  "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",
+  "isDefault": true,
+  "managedByTenants": [],
+  "name": "Azure subscription 1",
+  "state": "Warned",
+  "tenantDefaultDomain": "NETORGFT1029135.onmicrosoft.com",
+  "tenantDisplayName": "thesharp.ninja",
+  "tenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+  "user": {
+    "name": "ninja@thesharp.ninja",
+    "type": "user"
+  }
+}

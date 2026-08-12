@@ -1,0 +1,22 @@
+UTC=2026-08-12T18:53:42.3218573Z
+HOST=PAYTON-LEGION2
+LOCAL_VCPU=16 LOCAL_MEM_GIB=23.4 MEETS_BAR=False
+CMD_az=C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd
+CMD_gcloud=C:\Users\kingd\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.ps1
+CMD_aws=MISSING
+CMD_gh=C:\Program Files\GitHub CLI\gh.exe
+CMD_terraform=C:\Users\kingd\AppData\Local\Microsoft\WinGet\Links\terraform.exe
+CMD_pulumi=MISSING
+AZ_ACCOUNT_EXIT=0
+AZ_VM_LIST_EXIT=0
+AZ_SIZES_EXIT=0
+GCLOUD_EXIT=0
+
+DOCKER_PS=octopus-legion2-octopus-api-tls-1 caddy:2.10.0-alpine Up 2 days
+DOCKER_PS=truckmate-gateway-load-planning sharpninja/truckmate-load-planning-service:0.2.0-preprod.20260725.2 Up 2 days (healthy)
+DOCKER_PS=octopus-legion2-octopus-server-1 octopusdeploy/octopusdeploy:latest Up 2 days (healthy)
+DOCKER_PS=octopus-legion2-db-1 mcr.microsoft.com/mssql/server:2022-latest Up 2 days
+DOCKER_PS=server-submit-1 server-submit Up 2 days
+DOCKER_PS=server-monitor-1 server-monitor Up 2 days
+DOCKER_PS=server-ngrok-1 ngrok/ngrok:latest Up 2 days
+ROOT_MISSING=\\PAYTON-DESKTOP\
