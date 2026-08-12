@@ -45,15 +45,16 @@ static long DirectorySizeBytes(string root)
 
 static string InferStage(string workDir, string tilesDir)
 {
-    // Prefer the most "advanced" stage folder present (order matters).
+    // Prefer the most "advanced" stage folder present under work (order matters).
+    // Important: do not match the absolute path of work/tiles roots (their names contain "tiles").
     string[][] stages =
     [
-        ["tile", "tiles", "bounded-tiles", "tile-write", "graph-tiles"],
+        ["bounded-tiles", "tile-write", "graph-tiles", "output-tiles"],
         ["restriction", "restrictions", "pooled-restriction"],
         ["enhance", "enhancer", "pooled-enhance"],
         ["frontier", "pooled-frontier", "path-frontier", "graph-build"],
-        ["pooled-semantic", "semantic", "canonical-metadata", "canonical-way-nodes", "node-incidence"],
-        ["osm-intermediate", "osm-nodes", "osm-ways", "osm-relations", "pbf", "ingest"],
+        ["pooled-semantic", "canonical-metadata", "canonical-way-nodes", "node-incidence", "semantic"],
+        ["osm-intermediate", "osm-nodes", "osm-ways", "osm-relations"],
     ];
     string[] labels =
     [
@@ -65,21 +66,6 @@ static string InferStage(string workDir, string tilesDir)
         "pbf-ingestion",
     ];
 
-    var dirs = new List<string>();
-    void Collect(string root)
-    {
-        if (!Directory.Exists(root)) return;
-        try
-        {
-            foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
-                dirs.Add(d);
-            dirs.Add(root);
-        }
-        catch { }
-    }
-    Collect(workDir);
-    Collect(tilesDir);
-
     if (Directory.Exists(tilesDir))
     {
         try
@@ -90,16 +76,40 @@ static string InferStage(string workDir, string tilesDir)
         catch { }
     }
 
+    var relDirs = new List<string>();
+    if (Directory.Exists(workDir))
+    {
+        try
+        {
+            foreach (var d in Directory.EnumerateDirectories(workDir, "*", SearchOption.AllDirectories))
+            {
+                relDirs.Add(Path.GetRelativePath(workDir, d));
+            }
+        }
+        catch { }
+    }
+
     for (var i = 0; i < stages.Length; i++)
     {
         foreach (var marker in stages[i])
         {
-            if (dirs.Any(d => d.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+            if (relDirs.Any(d => d.Contains(marker, StringComparison.OrdinalIgnoreCase)))
                 return labels[i];
         }
     }
 
-    return Directory.Exists(workDir) ? "startup-or-idle" : "starting";
+    // PBF ingestion often writes files before named stage folders stabilize.
+    if (Directory.Exists(workDir))
+    {
+        try
+        {
+            if (Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories).Any())
+                return "pbf-ingestion-or-scratch";
+        }
+        catch { }
+    }
+
+    return "starting";
 }
 
 TryDelete(work);
