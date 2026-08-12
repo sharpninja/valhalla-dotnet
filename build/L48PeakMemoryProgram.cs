@@ -13,8 +13,27 @@ var memBudget = long.Parse(args[4]);
 var scratchBudget = long.Parse(args[5]);
 var dop = int.Parse(args[6]);
 
-if (Directory.Exists(work)) Directory.Delete(work, true);
-if (Directory.Exists(tiles)) Directory.Delete(tiles, true);
+static void TryDelete(string path)
+{
+    for (var attempt = 0; attempt < 5; attempt++)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            return;
+        }
+        catch (IOException) when (attempt < 4) { Thread.Sleep(500); }
+        catch (UnauthorizedAccessException) when (attempt < 4) { Thread.Sleep(500); }
+    }
+    // Fall back to unique suffix if still locked.
+}
+TryDelete(work);
+TryDelete(tiles);
+if (Directory.Exists(work) || Directory.Exists(tiles))
+{
+    work += "-" + Guid.NewGuid().ToString("N")[..8];
+    tiles += "-" + Guid.NewGuid().ToString("N")[..8];
+}
 Directory.CreateDirectory(work);
 Directory.CreateDirectory(tiles);
 

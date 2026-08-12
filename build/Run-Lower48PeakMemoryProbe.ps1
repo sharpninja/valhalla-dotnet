@@ -37,9 +37,9 @@ $scratchBudget = [long]$ScratchBudgetGiB * 1GB
 $runs = [System.Collections.Generic.List[object]]::new()
 for ($i = 0; $i -lt $RunCount; $i++) {
   Write-Output ("L48_PEAK_RUN_BEGIN index={0} dop={1} memBudgetGiB={2}" -f $i,$MaxDop,$MemoryBudgetGiB)
-  $work = Join-Path $WorkRoot ("run-{0}-work" -f $i)
-  $tiles = Join-Path $WorkRoot ("run-{0}-tiles" -f $i)
-  $json = Join-Path $WorkRoot ("run-{0}.json" -f $i)
+  $work = Join-Path $WorkRoot ("run-{0}-{1}-work" -f $i,$stamp)
+  $tiles = Join-Path $WorkRoot ("run-{0}-{1}-tiles" -f $i,$stamp)
+  $json = Join-Path $WorkRoot ("run-{0}-{1}.json" -f $i,$stamp)
   & dotnet run --project (Join-Path $tmp 'L48Peak.csproj') -c Release --no-launch-profile -- $PbfPath $work $tiles $json $memBudget $scratchBudget $MaxDop
   $exit = $LASTEXITCODE
   if (-not (Test-Path $json)) { throw "Missing run json: $json exit=$exit" }
