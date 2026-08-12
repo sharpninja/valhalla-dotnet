@@ -1,0 +1,53 @@
+UTC=20260812T200354Z
+az all: [
+  {
+    "cloudName": "AzureCloud",
+    "homeTenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+    "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",
+    "isDefault": true,
+    "managedByTenants": [],
+    "name": "Azure subscription 1",
+    "state": "Warned",
+    "tenantDefaultDomain": "NETORGFT1029135.onmicrosoft.com",
+    "tenantDisplayName": "thesharp.ninja",
+    "tenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+    "user": {
+      "name": "ninja@thesharp.ninja",
+      "type": "user"
+    }
+  }
+]
+
+az show: {
+  "environmentName": "AzureCloud",
+  "homeTenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+  "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",
+  "isDefault": true,
+  "managedByTenants": [],
+  "name": "Azure subscription 1",
+  "state": "Warned",
+  "tenantDefaultDomain": "NETORGFT1029135.onmicrosoft.com",
+  "tenantDisplayName": "thesharp.ninja",
+  "tenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",
+  "user": {
+    "name": "ninja@thesharp.ninja",
+    "type": "user"
+  }
+}
+
+az enable try: ERROR: Bad Request({"error":{"code":"NotAllowed","message":"Your subscription cannot be enabled since it has pending dues. Make required payments and retry"},"code":"NotAllowed","message":"Your subscription cannot be enabled since it has pending dues. Make required payments and retry"})
+
+az rg: ERROR: (ReadOnlyDisabledSubscription) The subscription 'f52f8b2f-8faa-4207-9adb-67fd64da9b8a' is disabled and therefore marked as read only. You cannot perform any write actions on this subscription until it is re-enabled.
+Code: ReadOnlyDisabledSubscription
+Message: The subscription 'f52f8b2f-8faa-4207-9adb-67fd64da9b8a' is disabled and therefore marked as read only. You cannot perform any write actions on this subscription until it is re-enabled.
+
+gcloud: 
+No credentialed accounts.
+
+To login, run:
+  $ gcloud auth login `ACCOUNT`
+
+
+local cpu=16 mem=23.37
+pbf=True
+tip=46209dd
