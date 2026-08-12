@@ -8,4 +8,4 @@
 Test run for F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\tests\SharpNinja.Valhalla.Generation.Tests\bin\Debug\net10.0\SharpNinja.Valhalla.Generation.Tests.dll (.NETCoreApp,Version=v10.0)
 A total of 1 test files matched the specified pattern.
 
-Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 47 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 42 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)

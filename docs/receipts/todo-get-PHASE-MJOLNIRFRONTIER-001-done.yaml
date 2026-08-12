@@ -1,0 +1,53 @@
+Failsafe queue drain: replayed=0 failed=1 quarantined=2 skipped=0 dir='F:\GitHub\TruckMate\.mcpServer\grok\failsafe'.
+type: result
+payload:
+  requestId: req-20260812T220902Z-021c
+  result:
+    id: PHASE-MJOLNIRFRONTIER-001
+    title: Pooled Value-Type Node Frontier (BDPv4)
+    section: Valhalla
+    priority: high
+    done: true
+    estimate: multi-week
+    note: >
+      DONE under AMD-MJOLNIRFRONTIER-001-L48-DEFER. Formal L48 deferred. CLI Legacy. Tip 1238601.
+    description:
+    - 'Source plan: C:\Users\kingd\.codex\tmp\Pooled-Value-Type-Node-Frontier-Plan.md'
+    - 'Workspace plan: docs/PLAN-PHASE-MJOLNIRFRONTIER-001-Pooled-Value-Type-Node-Frontier.md'
+    - 'Finish plan: docs/PLAN-FINISH-PHASE-MJOLNIRFRONTIER-001.md'
+    - 'Audit: docs/AUDIT-PHASE-MJOLNIRFRONTIER-001-code-completeness.md'
+    - 'CODE LOCATION: SharpNinja.Valhalla.Generation on branch codex/pooled-node-frontier (13 commits ahead of main). Worktree: C:\Users\kingd\OneDrive\Documents\SharpNinja\valhalla-pooled-frontier @ 1d61909.'
+    - main does NOT contain PooledFrontier path (legacy ManagedRoadGraphBuilder only).
+    - 'Outcome: bounded pooled value-type node frontier pipeline; Official Valhalla remains deployed until qualification+rollout complete.'
+    technicalDetails:
+    - 'PRESENT on branch: ManagedRoadGraphPipeline Legacy|PooledFrontier; BuildPooledFrontierAsync; CompactOsmSemanticStore; NodeIncidenceIndex; StableGraphIdentityIndex; PooledNodeArena/NodeWorkItem/NodeHandle; PooledPathFrontier/WaySession; PooledRoadEdgeBuilder; DurableFrontierEdgeSink; BoundedRoadTileWriter; simple+complex restriction indexes; PooledRoadRestrictionStage; ValhallaGenerationFrontierMetrics; all 6 named PooledNodeFrontierTests methods.'
+    - 'TESTS: hostile re-run on dirty worktree frontier-ish Release filter Passed 126 / Failed 0 / Skipped 0 (supersedes earlier 115 filter count). Full clean-tip suite still required (F0).'
+    - 'PARTIAL: Gate 6 Stage G bounded enhance without dual in-memory generations; Gate 7 adaptive DOP fit-to-budget; consumer matrix residuals (plan 9).'
+    - 'MISSING: Gate 8 full DOP/hash/official parity matrix; Nashville 10 complete; Lower-48 11 complete (MCP Codex-20260811T142746Z-plugin-session still in_progress); merge to main; CLI default flip; controlled rollout 12; MCP checkpoints were stale until this update.'
+    - 'MCP sessions: Codex L48 pooled-nodes session in_progress; Codex official generator session related. Codex rollouts under ~/.codex/sessions/2026/08/10 and 08/11.'
+    implementationTasks:
+    - task: 'Gate 0: Branch/worktree isolation (codex/pooled-node-frontier)'
+      done: true
+    - task: 'Gate 0 residual: Freeze baseline receipts + clean worktree tip + full suite on clean SHA'
+      done: true
+    - task: 'Gate 1: RED/GREEN architecture and lifecycle tests'
+      done: true
+    - task: 'Gate 2: Compact stores and incidence index'
+      done: true
+    - task: 'Gate 3: Pooled node arena'
+      done: true
+    - task: 'Gate 4: Pooled path frontier and edge construction'
+      done: true
+    - task: 'Gate 5: Restrictions, controls, and cross-tile topology'
+      done: true
+    - task: 'Gate 6: Bounded tile writing + Stage G pooled enhance'
+      done: true
+    - task: 'Gate 7: Adaptive resource scheduling'
+      done: true
+    - task: 'Gate 8: Complete semantic and deterministic validation matrix'
+      done: true
+    - task: Nashville qualification (plan 10) experimental report
+      done: true
+    - task: Lower-48 qualification (plan 11) formal 32/64/1TiB pass
+      done: false
+    - task: 'Merge to main (PR #1); CLI remains Legacy; formal L48 rollout DEFERRED by AMD-MJOLNIRFRONTIER-001-L48-DEFER'
