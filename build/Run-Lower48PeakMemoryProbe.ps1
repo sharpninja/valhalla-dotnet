@@ -4,8 +4,8 @@ param(
   [string]$PbfPath = 'E:\valhalla-qual\pbf\us-lower48.osm.pbf',
   [string]$WorkRoot = 'E:\valhalla-qual\lower48-peak',
   [int]$MaxDop = 4,
-  [long]$MemoryBudgetGiB = 12,
-  [long]$ScratchBudgetGiB = 800,
+  [long]$MemoryBudgetGiB = 16,
+  [long]$ScratchBudgetGiB = 10000,
   [int]$RunCount = 1,
   [int]$HeartbeatSeconds = 10
 )
@@ -61,8 +61,12 @@ for ($i = 0; $i -lt $RunCount; $i++) {
   })
   Write-Output ("L48_PEAK_RUN_END index={0} success={1} peakWS={2} peakInter={3} tiles={4} sec={5}" -f $i,$r.success,$r.peakWorkingSetBytes,$r.peakIntermediateMemoryBytes,$r.tileCount,$r.durationSeconds)
 }
-$peakWs = ($runs | Measure-Object -Property peakWorkingSetBytes -Maximum).Maximum
-$peakInter = ($runs | Measure-Object -Property peakIntermediateMemoryBytes -Maximum).Maximum
+$peakWs = 0L
+$peakInter = 0L
+foreach ($run in $runs) {
+  if ([long]$run.peakWorkingSetBytes -gt $peakWs) { $peakWs = [long]$run.peakWorkingSetBytes }
+  if ([long]$run.peakIntermediateMemoryBytes -gt $peakInter) { $peakInter = [long]$run.peakIntermediateMemoryBytes }
+}
 $anyOk = [bool]($runs | Where-Object { $_.success } | Select-Object -First 1)
 $report = [ordered]@{
   campaign = 'Lower48PeakMemory'; pipeline = 'PooledFrontier'
