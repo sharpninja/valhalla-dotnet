@@ -1,7 +1,10 @@
-# PLAN AMENDMENT DRAFT (NOT ACTIVE until operator approves)
+# PLAN AMENDMENT (ACTIVE)
 
 **Id:** AMD-MJOLNIRFRONTIER-001-L48-DEFER
-**UpdatedUtc:** 2026-08-12T21:50:00Z
+**Status:** ACTIVE
+**ApprovedUtc:** 2026-08-12T21:58:00Z
+**Operator approval:** `APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER`
+**UpdatedUtc:** 2026-08-12T21:58:00Z
 **Target plans:**
 - docs/PLAN-FINISH-PHASE-MJOLNIRFRONTIER-001.md
 - docs/PLAN-PHASE-MJOLNIRFRONTIER-001-Pooled-Value-Type-Node-Frontier.md section 14
@@ -21,5 +24,5 @@ Formal Lower-48 (32 vCPU / 64 GiB / >=1 TiB free disk) cannot run on PAYTON-LEGI
 5. No fabricated formal-pass L48 report is permitted.
 
 ## Operator approval
-To activate: reply exactly `APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER`.
-Until that string is received, this draft has zero effect on DoD or MCP done.
+**Received and active.** Operator replied exactly `APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER`.
+Receipt: `docs/APPROVE-AMD-MJOLNIRFRONTIER-001-L48-DEFER.md`.
