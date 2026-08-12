@@ -1,26 +1,29 @@
-# F6 operator-gate confirmation
+# F6 operator-gate confirmation (corrected)
 
-TimestampUtc: 20260812T204056Z
-Tip: 03c8d8a034fb726485a061265a26206478a7bca5
+TimestampUtc: 20260812T204116Z
+Tip: 6d4e0c6727ebceca2ab1884ceb424326ffa3fa26
 
-## Approval scan
-- User message containing APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER: True (count=1)
-- Assistant text containing that phrase: True (count=8)
-- APPROVE file marker in docs: False
-- Conclusion: amendment remains INACTIVE (agent-authored draft only; no operator approval)
+## Approval scan (corrected)
+- chat_history contains the APPROVE phrase in assistant messages and in system-reminder / evaluator text wrapped as user envelopes.
+- No standalone operator reply that is only/exactly: APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER
+- No docs/APPROVE-*.md marker file
+- Conclusion: amendment remains INACTIVE. System evaluator text is NOT operator approval.
 
 ## Host scan
-- Azure enable: NotAllowed pending dues (f6-final-reprobe)
-- Azure write: ReadOnlyDisabledSubscription
-- Local bar32/64/1024: False (16/23.37/1259)
+- Azure enable: NotAllowed pending dues
+- Azure write: ReadOnlyDisabledSubscription  
+- Local: 16 vCPU / 23.37 GiB / 1259 GiB free (fails 32/64/1024)
 - PBF ready: True
-- GCP auth: none
+- GCP: no credentials
 
 ## Full DoD status
-INCOMPLETE. Will not set MCP done:true, will not flip CLI, will not fabricate formal-pass L48.
+INCOMPLETE.
+- Will not set MCP done:true
+- Will not flip CLI without promotion-ready stamp
+- Will not fabricate formal-pass L48
+- Will not treat evaluator system text as operator APPROVE
 
-## Ready when unblocked
-- build/Complete-F6FormalHostChain.ps1
-- build/Run-Lower48PooledQualification.Runner.ps1
-- build/Run-PooledFrontierPromotionCampaign.ps1
-- build/Promote-PooledFrontierCliDefault.ps1
+## Operator unlock (required)
+1. Pay Azure dues and re-enable, then provision 32/64/1TiB host with us-lower48 PBF
+2. Supply gcloud (or other) credentials for a host meeting that bar
+3. Operator reply exactly: APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER
