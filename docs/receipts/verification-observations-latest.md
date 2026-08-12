@@ -1,31 +1,36 @@
-# Verification plan observations 20260812T204216Z
+# Verification plan 20260812T204333Z - F6 still blocked
 
-## 1 Full suites
-- f0-tip: 745a39d10111eead58d71a5a930adc5a3d2013b8 clean
-- Release: C:\Users\kingd\AppData\Local\Temp\grok-goal-845873d7e251\implementer\f0-f3-full-suite-Release.log:11:Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 35 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
-- Debug: C:\Users\kingd\AppData\Local\Temp\grok-goal-845873d7e251\implementer\f0-f3-full-suite-Debug.log:11:Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 37 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+## 1 Full Generation.Tests Debug+Release
+- HEAD: 615ff23032283c6a9144bb9d27e76a52505ce875 clean
+- Release: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 35 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+- Debug: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 37 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 
-## 2-3 Gate filter
-- C:\Users\kingd\AppData\Local\Temp\grok-goal-845873d7e251\implementer\f1-f3-gate-filter.log:11:Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 22 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+## 2-3 Gate filters
+- Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 22 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 
-## 4 Reports
+## 4 Nashville + L48
 - nashville: present experimental
-- l48 status: blocked-formal-capacity
+- l48 status: blocked-formal-capacity (NOT formal-pass)
 
 ## 5 MCP done:true
-- LIVE: done=false (OBSERVATION FAILS for full goal - correct until host/APPROVE)
+- LIVE done=false (OBSERVATION FAILS for full goal - correct)
+- Capture: todo-get-PHASE-MJOLNIRFRONTIER-001.yaml
 
-## 6 main+CLI
-- 839:ManagedRoadGraphPipeline.Legacy.ToString());
-PR1_in_origin_main=yes 1fffa26
-worktree_tip=2f062dfb7516a7ce2bb5dc5eda02e7e4130fbe90
+## 6 main + CLI
+- PR#1 on origin/main 1fffa26
+- CLI default Legacy (ValhallaGenerationCli.cs:839)
+- Capture: f6-main-and-cli.txt
 
+## 7 Hostile full DoD AGREE
+- honesty-blocker AGREE only (20260812T200100Z)
+- Full F0-F6 DoD: NOT AGREE / not claimed
 
-## 7 Hostile full DoD
-- honesty AGREE only; full DoD NOT AGREE
+## Unlock probe 20260812T204333Z
+- Azure: NotAllowed pending dues + ReadOnlyDisabledSubscription
+- Local bar32/64/1024: False
+- real_operator_approve: False
+- UNLOCK_OPEN: False
 
-## F6 overall
-- Merge: YES (PR1 1fffa26)
-- Formal L48 + 7-day promo + CLI promote + MCP done:true: NO (operator blocked)
-- real_operator_approve=False
-- Azure NotAllowed pending dues
+## F6 checklist
+- Merge: DONE
+- 7-day promo / CLI promote / MCP done:true / full hostile: BLOCKED
