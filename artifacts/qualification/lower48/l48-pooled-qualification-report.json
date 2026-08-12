@@ -1,16 +1,16 @@
 {
   "campaign": "Lower48",
   "pipeline": "PooledFrontier",
-  "branchSha": "2076e9e6df2bc59f3b27228c3501cafa2d777013",
-  "pbfPath": "NOT_PRESENT",
-  "pbfSha256": "NONE",
+  "branchSha": "2419349d5d296de157e88416604cb7370813500e",
+  "pbfPath": "E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf",
+  "pbfSha256": "A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3",
   "configPath": "benchmarks/config/lower48-3.8.3.json",
   "oracle": "OfficialValhalla-3.8.3",
   "machine": {
-    "hostName": "PAYTON-LEGION2",
-    "diskGiB": 1274,
     "memoryGiB": 23,
-    "vCpu": 16
+    "hostName": "PAYTON-LEGION2",
+    "vCpu": 16,
+    "diskGiB": 1259
   },
   "runs": [
     {
@@ -22,7 +22,7 @@
       "peakLiveNodes": 0,
       "outputTreeSha256": "NONE",
       "success": false,
-      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1274 (need 32/64/1024)"
+      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1259 (need 32/64/1024)"
     },
     {
       "index": 1,
@@ -33,7 +33,7 @@
       "peakLiveNodes": 0,
       "outputTreeSha256": "NONE",
       "success": false,
-      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1274 (need 32/64/1024)"
+      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1259 (need 32/64/1024)"
     },
     {
       "index": 2,
@@ -44,17 +44,17 @@
       "peakLiveNodes": 0,
       "outputTreeSha256": "NONE",
       "success": false,
-      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1274 (need 32/64/1024)"
+      "failure": "host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1259 (need 32/64/1024)"
     }
   ],
   "verdict": {
     "memoryGatePassed": false,
     "memoryRatioVsOfficial": null,
-    "status": "blocked-formal-capacity-and-pbf-missing",
-    "estimatedGcpCostUsd": null,
     "semanticGatePassed": false,
-    "performanceGatePassed": false,
-    "performanceRatioVsOfficial": null
+    "status": "blocked-formal-capacity-and-pbf-missing",
+    "performanceRatioVsOfficial": null,
+    "estimatedGcpCostUsd": null,
+    "performanceGatePassed": false
   },
-  "notes": "Formal L48 refused on PAYTON-LEGION2.\nProbe 2026-08-12T18:23:35Z: LOCAL_VCPU=16 LOCAL_MEM_GIB=23.4 LOCAL_MEETS_L48_BAR=False.\nPBF search: no us-lower48/us-latest/north-america-latest found (largest extracts Tennessee ~0.17GB).\nPAYTON-DESKTOP ping OK but WinRM auth failed (cannot remote-measure capacity).\nDocker Desktop: 16 CPUs / 11.36 GiB (not formal L48).\nStale MCP session Codex-20260811T142746Z-plugin-session documented closed by GrokCode-20260812T182508Z-close-l48-session (session remains server-side in_progress for Codex agent identity; final blocked report attached).\nNo Nashville extrapolation used as L48 substitute.\nHarness: build/Run-Lower48PooledQualification.ps1 (fail-closed unless 32/64/1TiB + PBF)."
+  "notes": "Formal L48 refused on host bar (PAYTON-LEGION2 16 vCPU / ~23 GiB; need 32/64/1TiB).\nPBF NOW PRESENT: E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf (12077262565 bytes, sha256 A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3) staged from Geofabrik us-latest.\nAzure subscription Disabled with pending dues (NotAllowed on enable).\nGCP unauthenticated. Formal Runner + 7-day promotion scripts ready when host available."
 }
