@@ -1,6 +1,5 @@
 839:ManagedRoadGraphPipeline.Legacy.ToString());
 PR1_in_origin_main=yes 1fffa26
-worktree_tip=04bccfc1a0b87bbefaf15d490bff18585422dc39
-origin_main=1fffa261cf95c7630fd1c034c2f7e4b28b3b82bb
-UNLOCK_OPEN=False
-UTC=20260812T205133Z
+worktree_tip=12386016aeabe0d9a254b411bb59f23bf6ccada9
+AMENDMENT=ACTIVE AMD-MJOLNIRFRONTIER-001-L48-DEFER
+CLI_FLIP=deferred

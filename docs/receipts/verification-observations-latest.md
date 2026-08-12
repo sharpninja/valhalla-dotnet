@@ -1,23 +1,33 @@
-# Verification observations 20260812T215313Z (post Azure-out policy)
+# Verification plan under ACTIVE amendment 20260812T220231Z
 
-## Lab policy
-- Azure: not used
-- Hosts: PAYTON-LEGION2, PAYTON-DESKTOP
-- Deploy: Octopus
-- Origin: GitHub (no GitHub Actions)
+## Scope
+AMD-MJOLNIRFRONTIER-001-L48-DEFER ACTIVE (operator APPROVE). Formal L48 + 7-day promo + CLI flip deferred.
 
-## Host bar
-- LEGION2: 16 vCPU / 23.37 GiB / ~1259 free disk -> fails formal 32/64/1024
-- DESKTOP: ping True; WinRM/SSH/admin-share fail from LEGION2
-- PBF: ready on E:
+## 1 Full suites
+- HEAD: 12386016aeabe0d9a254b411bb59f23bf6ccada9
+- Release: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 51 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+- Debug: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 47 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 
-## Suites (prior receipts still valid)
-- Generation.Tests D+R 380/380
-- Gate filter 33/33
+## 2-3 Gate filters
+- Prior gate filter log: Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 22 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 
-## MCP
-- Marker file missing; done state not re-queried this turn
-- Phase remains incomplete for formal L48 DoD
+## 4 Reports
+- nashville: present experimental
+- l48: blocked-formal-capacity (expected non-formal-pass under amendment)
 
-## F6
-- Merge done; promo/CLI/done blocked on lab host bar or APPROVE
+## 5 MCP done:true
+- LIVE done=true under amendment (todo-get-PHASE-MJOLNIRFRONTIER-001.yaml)
+- doneSummary cites AMD-MJOLNIRFRONTIER-001-L48-DEFER
+
+## 6 main+CLI
+- PR1 on origin/main
+- CLI Legacy (flip deferred)
+
+## 7 Hostile amended DoD AGREE
+- OverallVerdict AGREE: docs/hostile-validator-20260812T220524Z.md (PASS 10 / FAIL 0)
+
+## F6 under amendment
+- Merge: DONE
+- Formal L48/promo/CLI: DEFERRED
+- Phase closed under amended DoD when hostile AGREE
+

@@ -1,0 +1,75 @@
+{
+  "TimestampUtc": "20260812T220524Z",
+  "ValidatorIdentity": "GrokSubagentHostile",
+  "Workspace": "F:\\GitHub\\TruckMate",
+  "Worktree": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier",
+  "BranchTip": "12386016aeabe0d9a254b411bb59f23bf6ccada9",
+  "Scope": "AMD-MJOLNIRFRONTIER-001-L48-DEFER ACTIVE amended DoD only",
+  "Claims": [
+    {
+      "Id": "C1",
+      "Summary": "APPROVE files ACTIVE in TruckMate docs and worktree receipts",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C2",
+      "Summary": "PLAN-FINISH contains ACTIVE L48-DEFER amendment deferring formal L48 and 7-day/CLI flip",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C3",
+      "Summary": "Generation.Tests 380/0/0 Debug+Release logs; hostile Release re-run at HEAD EXIT0 380/0/0",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C4",
+      "Summary": "origin/main is PR#1 merge 1fffa26; PooledFrontier types present on main",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C5",
+      "Summary": "road-pipeline default ManagedRoadGraphPipeline.Legacy on worktree and origin/main",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C6",
+      "Summary": "nashville-pooled-qualification-report.json present; status experimental",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C7",
+      "Summary": "l48 verdict.status blocked-formal-capacity; not formal-pass",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C8",
+      "Summary": "Runner + PromotionCampaign + Promote-PooledFrontierCliDefault scripts exist",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C9",
+      "Summary": "Live MCP TODO done:true; note/doneSummary cite AMD-MJOLNIRFRONTIER-001-L48-DEFER; Lower-48 task done:false",
+      "Verdict": "PASS"
+    },
+    {
+      "Id": "C10",
+      "Summary": "No implementer claim of CLI promote or formal L48 pass under this completion",
+      "Verdict": "PASS"
+    }
+  ],
+  "ExplicitFailList": [],
+  "OverallVerdict": "AGREE",
+  "HostileReverifyRelease": {
+    "Result": "Failed 0 Passed 380 Skipped 0",
+    "Log": "docs/receipts/hostile-reverify-Release-20260812T220300Z.log",
+    "Head": "12386016aeabe0d9a254b411bb59f23bf6ccada9",
+    "ExitCode": 0
+  },
+  "McpTodoLive": {
+    "Lower48FormalTaskDone": false,
+    "NoteContainsAmendment": true,
+    "Id": "PHASE-MJOLNIRFRONTIER-001",
+    "DoneSummaryContainsAmendment": true,
+    "Done": true
+  }
+}
