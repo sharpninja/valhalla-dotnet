@@ -1,15 +1,15 @@
 {
   "campaign": "Lower48",
   "pipeline": "PooledFrontier",
-  "branchSha": "2419349d5d296de157e88416604cb7370813500e",
+  "branchSha": "bd358bb5478b05cc73f6b12a34b4acffc45954f9",
   "pbfPath": "E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf",
   "pbfSha256": "A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3",
   "configPath": "benchmarks/config/lower48-3.8.3.json",
   "oracle": "OfficialValhalla-3.8.3",
   "machine": {
-    "memoryGiB": 23,
     "hostName": "PAYTON-LEGION2",
     "vCpu": 16,
+    "memoryGiB": 23,
     "diskGiB": 1259
   },
   "runs": [
@@ -48,13 +48,13 @@
     }
   ],
   "verdict": {
+    "status": "blocked-formal-capacity",
     "memoryGatePassed": false,
-    "memoryRatioVsOfficial": null,
+    "performanceGatePassed": false,
     "semanticGatePassed": false,
-    "status": "blocked-formal-capacity-and-pbf-missing",
+    "memoryRatioVsOfficial": null,
     "performanceRatioVsOfficial": null,
-    "estimatedGcpCostUsd": null,
-    "performanceGatePassed": false
+    "estimatedGcpCostUsd": null
   },
-  "notes": "Formal L48 refused on host bar (PAYTON-LEGION2 16 vCPU / ~23 GiB; need 32/64/1TiB).\nPBF NOW PRESENT: E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf (12077262565 bytes, sha256 A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3) staged from Geofabrik us-latest.\nAzure subscription Disabled with pending dues (NotAllowed on enable).\nGCP unauthenticated. Formal Runner + 7-day promotion scripts ready when host available."
+  "notes": "Formal L48 refused on host bar only (PBF present). Azure ReadOnlyDisabledSubscription. GCP unauthenticated. Re-probed 2026-08-12T19:55Z."
 }

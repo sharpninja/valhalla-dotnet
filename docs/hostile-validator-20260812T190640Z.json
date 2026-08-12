@@ -1,0 +1,101 @@
+{
+  "reportId": "hostile-validator-20260812T190640Z",
+  "timestampUtc": "2026-08-12T19:06:40Z",
+  "validator": "Grok-hostile",
+  "worktree": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier",
+  "branch": "codex/pooled-node-frontier",
+  "tipSha": "4245639fd399701ba02a5904438cd12a54a9c0af",
+  "tipShort": "4245639",
+  "claimSetNote": "C7 = no fabricated formal L48 pass (not FULL DoD complete)",
+  "claims": [
+    {
+      "evidence": [
+        "tests/.../PromotionGateTests.cs exists (4 Facts)",
+        "docs/receipts/f6-promotion-tests.log: Passed! Failed: 0, Passed: 10"
+      ],
+      "hostileNotes": [
+        "Log Passed:10 wider than PromotionGate 4 Facts; filter string not in log"
+      ],
+      "id": "C1",
+      "verdict": "PASS",
+      "title": "PromotionGateTests exist; log Passed 0 failed"
+    },
+    {
+      "evidence": [
+        "build/Run-Lower48PooledQualification.Runner.ps1",
+        "build/Run-PooledFrontierPromotionCampaign.ps1",
+        "build/Promote-PooledFrontierCliDefault.ps1"
+      ],
+      "hostileNotes": [],
+      "id": "C2",
+      "verdict": "PASS",
+      "title": "Promotion scripts on branch"
+    },
+    {
+      "evidence": [
+        "ReadOnlyDisabledSubscription cannot create RG or VM",
+        "Local 16/23.4 fails 32/64/1TiB bar"
+      ],
+      "hostileNotes": [],
+      "id": "C3",
+      "verdict": "PASS",
+      "title": "f6-operator-blocker honest"
+    },
+    {
+      "evidence": [
+        "f6-azure-provision.log VM_CREATE_*_EXIT=2 RG_CREATE_EXIT=1",
+        "scratch az-rg-create.json Code ReadOnlyDisabledSubscription"
+      ],
+      "hostileNotes": [
+        "Committed slim log lacks ReadOnlyDisabled string; VM fail still satisfies claim"
+      ],
+      "id": "C4",
+      "verdict": "PASS",
+      "title": "Azure provision ReadOnlyDisabled or VM fail"
+    },
+    {
+      "evidence": [
+        "ValhallaGenerationCli.cs AddDefault road-pipeline ManagedRoadGraphPipeline.Legacy on origin/main and tip"
+      ],
+      "hostileNotes": [],
+      "id": "C5",
+      "verdict": "PASS",
+      "title": "CLI default Legacy main+worktree"
+    },
+    {
+      "evidence": [
+        "GET /mcpserver/todo?id=PHASE-MJOLNIRFRONTIER-001 done:false"
+      ],
+      "hostileNotes": [],
+      "id": "C6",
+      "verdict": "PASS",
+      "title": "MCP PHASE-MJOLNIRFRONTIER-001 done false"
+    },
+    {
+      "evidence": [
+        "l48-pooled-qualification-report.json verdict.status=blocked-formal-capacity-and-pbf-missing",
+        "no formal-pass status receipt"
+      ],
+      "hostileNotes": [
+        "Original FULL DoD complete claim would FAIL; alternative C7 used"
+      ],
+      "id": "C7",
+      "verdict": "PASS",
+      "title": "No fabricated formal L48 pass"
+    },
+    {
+      "evidence": [
+        "blocker/provision artifacts fail-closed",
+        "no success-phrase matches in implementer scratch"
+      ],
+      "hostileNotes": [],
+      "id": "C8",
+      "verdict": "PASS",
+      "title": "No Azure VM provisioned success claim"
+    }
+  ],
+  "overallVerdict": "AGREE",
+  "residualRisks": [
+    "Tighten next promotion test receipt with explicit --filter FullyQualifiedName~PromotionGateTests"
+  ]
+}

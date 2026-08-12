@@ -1,0 +1,5 @@
+path=E:\valhalla-qual\pbf\us-lower48.osm.pbf
+sizeBytes=12077262565
+sha256=A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3
+source=Geofabrik us-latest.osm.pbf hardlink alias
+probedUtc=2026-08-12T19:53:46Z

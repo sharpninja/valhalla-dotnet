@@ -1,0 +1,20 @@
+UTC=20260812T195346Z
+HOSTNAME=PAYTON-LEGION2
+LOCAL_LOGICAL_CPU=16
+LOCAL_RAM_GIB=23.37
+DISK_C: free=472.38GiB total=1906.77GiB
+DISK_D: free=0.04GiB total=0.25GiB
+DISK_E: free=1259.68GiB total=1600.47GiB
+DISK_F: free=38.51GiB total=196.25GiB
+PBF path=E:\valhalla-qual\pbf\us-latest.osm.pbf size=12077262565 sha256=A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3
+PBF path=E:\valhalla-qual\pbf\us-lower48.osm.pbf size=12077262565 sha256=A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3
+--- AZURE ---
+az account show: {   "environmentName": "AzureCloud",   "homeTenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",   "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",   "isDefault": true,   "managedByTenants": [],   "name": "Azure subscription 1",   "state": "Warned",   "tenantDefaultDomain": "NETORGFT1029135.onmicrosoft.com",   "tenantDisplayName": "thesharp.ninja",   "tenantId": "1d041a69-96e1-4f6e-b2b1-15acade5f35d",   "user": {     "name": "ninja@thesharp.ninja",     "type": "user"   } }
+az state: {   "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",   "name": "Azure subscription 1",   "state": "Warned" }
+az list: WARNING: A few accounts are skipped as they don't have 'Enabled' state. Use '--all' to display them. []
+--- GCP ---
+gcloud auth:  No credentialed accounts.  To login, run:   $ gcloud auth login `ACCOUNT` 
+--- WORKTREE ---
+HEAD=bd358bb5478b05cc73f6b12a34b4acffc45954f9
+STATUS=## [32mcodex/pooled-node-frontier[m...[31morigin/codex/pooled-node-frontier[m [31m??[m artifacts/us-lower48.osm.pbf.pointer.txt [31m??[m docs/hostile-validator-20260812T190640Z.json [31m??[m docs/hostile-validator-20260812T190640Z.md
+MAIN=fd6cce9d11fd13c4cf7daf96c737027b3f2e9049 [33mfd6cce9[m perf(generation): stabilize enhancer control state
