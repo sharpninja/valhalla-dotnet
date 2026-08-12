@@ -1,4 +1,5 @@
-// Faithful C# port of Valhalla mjolnir graphbuilder.h + src/mjolnir/graphbuilder.cc @ 3.7.0.
+// C# port of Valhalla mjolnir graphbuilder.h + graphbuilder.cc, qualified against
+// Valhalla 3.8.3 commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5.
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/graphbuilder.h
 //   F:/github/valhalla/src/mjolnir/graphbuilder.cc
@@ -14,13 +15,10 @@
 //                        build DirectedEdges + EdgeInfo, signs, simple turn restrictions, access
 //                        restrictions, and write a byte-compatible baldr tile.
 //
-// EXCLUDED (out of scope for the auto/truck graph build): transit / bss / statistics / elevation;
-// the admin & timezone sqlite DBs; reclassify-links / ferry-connection reclass + hierarchy /
-// shortcuts (those are graphenhancer / graphfilter / hierarchybuilder slices); the linguistic /
-// pronunciation subsystem (OSMLinguistic / OSMNodeLinguistic), matching the established mjolnir
-// front-end port scope. The name/ref indices that ARE populated by the parser drive EdgeInfo names
-// and signs faithfully; pronunciation/language records are not produced (consistent with OSMWay /
-// PBFGraphParser port notes).
+// Ancillary transit, bike-share, elevation, admin, timezone, statistics, and historical-speed
+// generation remain separate pipeline stages. This road-graph stage now emits Valhalla 3.8.3 way
+// names, route references, languages, pronunciations, and linguistic tagged values. Node/sign
+// linguistic attribution remains a distinct graph-builder surface.
 //
 // PORT-NOTE: the C++ build spills ways / way_nodes / nodes / edges to mmapped midgard::sequence
 // temp files and runs BuildTileSet on a thread pool. This on-device port keeps everything in
@@ -29,6 +27,7 @@
 // simple turn restrictions, access restrictions) is preserved exactly.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -151,6 +150,14 @@ public sealed class GraphBuilder
             int firstWayNodeIndex = currentWayNodeIndex;
             int lastWayNodeIndex =
                 (int)(firstWayNodeIndex + way.NodeCount() - wayNode.WayShapeNodeIndex - 1);
+
+            // Valhalla 3.8.3 retains pedestrian-area rings for the dedicated area pass, but those
+            // boundary ways must never create ordinary graph edges.
+            if (way.Area())
+            {
+                currentWayNodeIndex = lastWayNodeIndex + 1;
+                continue;
+            }
 
             // Validate - make sure all nodes for this edge are valid.
             bool valid = true;
@@ -575,27 +582,58 @@ public sealed class GraphBuilder
         IReadOnlyList<OSMWay> ways,
         IReadOnlyList<OSMWayNode> wayNodes,
         Graph graph,
-        uint tileCreationDate = 0)
+        uint tileCreationDate = 0) =>
+        Build(
+            osmdata,
+            ways,
+            wayNodes,
+            graph,
+            tileCreationDate,
+            maxDegreeOfParallelism: 1,
+            CancellationToken.None);
+
+    /// <summary>
+    /// Builds local graph tiles with bounded parallel tile construction after global indexes freeze.
+    /// </summary>
+    public static Dictionary<GraphId, byte[]> Build(
+        OSMData osmdata,
+        IReadOnlyList<OSMWay> ways,
+        IReadOnlyList<OSMWayNode> wayNodes,
+        Graph graph,
+        uint tileCreationDate,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(osmdata);
         ArgumentNullException.ThrowIfNull(graph);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        cancellationToken.ThrowIfCancellationRequested();
 
         Dictionary<ulong, uint> ferrySpeeds = ComputeFerrySpeeds(ways, wayNodes);
         List<Node> nodes = graph.Nodes;
         List<Edge> edges = graph.Edges;
 
         Tiles<PointLL, double> tiling = TileHierarchy.Levels()[^1].Tiles;
-        var result = new Dictionary<GraphId, byte[]>();
+        var parallelResult = new ConcurrentDictionary<GraphId, byte[]>();
+        var parallelOptions = new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = maxDegreeOfParallelism,
+        };
 
-        foreach (KeyValuePair<GraphId, int> tile in graph.Tiles)
+        Parallel.ForEach(
+            graph.Tiles,
+            parallelOptions,
+            tile =>
         {
             GraphId tileId = tile.Key.TileBase();
             var graphtile = new GraphTileBuilder(tileId);
 
             graphtile.AddTileCreationDate(tileCreationDate);
             graphtile.HeaderBuilder.SetDatasetId(osmdata.MaxChangesetId);
-            graphtile.HeaderBuilder.SetChecksum(osmdata.PbfChecksum);
 
+            // Valhalla 3.8.3 hashes the serialized tile body, then stamps one build ID after all
+            // tiles have been serialized. The former PBF-wide checksum is not a tile checksum.
             // Set the base lat,lon of the tile.
             uint id = tileId.Tileid();
             PointLL baseLl = tiling.Base((int)id);
@@ -609,6 +647,10 @@ public sealed class GraphBuilder
             int nodeItr = tile.Value;
             while (nodeItr < nodes.Count && nodes[nodeItr].GraphId.TileBase() == tileId)
             {
+                if ((nodeItr & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 NodeBundle bundle = NodeExpander.CollectNodeEdges(nodeItr, nodes, edges);
 
                 if (bundle.NodeEdges.Count == 0)
@@ -763,13 +805,9 @@ public sealed class GraphBuilder
                             shape.Add(wayNodes[(int)edge.LlIndex + i].Node.LatLng());
                         }
 
-                        bool diffNames = false;
-                        ushort types = 0;
-
-                        // Build the (non-linguistic) names for this edge.
-                        List<string> names = GetNames(w, refStr, osmdata.NameOffsetMap, forward, ref types, ref diffNames);
+                        OSMWayNameData nameData =
+                            OSMWayLinguisticBuilder.Build(w, refStr, osmdata.NameOffsetMap, forward);
                         var taggedValues = new List<string>();
-                        var linguistics = new List<string>();
 
                         if (bikeNetwork != 0)
                         {
@@ -789,12 +827,12 @@ public sealed class GraphBuilder
                             bikeNetwork,
                             speedLimit,
                             shape,
-                            names,
+                            nameData.Names,
                             taggedValues,
-                            linguistics,
-                            types,
+                            nameData.Linguistics,
+                            nameData.Types,
                             out _,
-                            diffNames || dualRefs);
+                            nameData.DiffNames || dualRefs);
 
                         double length = PointLlPolyline2.Length(shape);
                         uint curvature = ComputeCurvature(shape);
@@ -1101,9 +1139,17 @@ public sealed class GraphBuilder
                 nodeItr += bundle.NodeCount;
             }
 
-            result[tileId] = graphtile.StoreTileData();
+            parallelResult[tileId] = graphtile.StoreTileData();
+        });
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = new Dictionary<GraphId, byte[]>(graph.Tiles.Count);
+        foreach (GraphId tileId in graph.Tiles.Keys)
+        {
+            result.Add(tileId.TileBase(), parallelResult[tileId.TileBase()]);
         }
 
+        GraphTileChecksum.StampTilesetBuildId(result.Values.ToArray());
         return result;
     }
 
@@ -1161,119 +1207,6 @@ public sealed class GraphBuilder
     private const uint StopSignFlag = 2;
     private const uint YieldSignFlag = 4;
 
-    // ------------------------------------------------------------------
-    // Name + sign helpers (non-linguistic; the pronunciation/language layer is out of scope).
-    // ------------------------------------------------------------------
-
-    // Build the list of (untagged) names for an edge, choosing the directional / left-right name
-    // and ref indices exactly as the C++ BuildTileSet body does, then resolving them through the
-    // name list. This mirrors OSMWay::GetNames minus the pronunciation/language records. The
-    // returned 'types' has bit i set when name i is a route number (ref), and 'diffNames' is set
-    // when a directional name was chosen (forcing a new EdgeInfo).
-    private static List<string> GetNames(
-        OSMWay w, string refStr, UniqueNames names, bool forward, ref ushort types, ref bool diffNames)
-    {
-        uint nameIndex = w.NameIndex;
-        if (w.NameRightIndex != 0 && forward)
-        {
-            nameIndex = w.NameRightIndex;
-            diffNames = true;
-        }
-        else if (w.NameLeftIndex != 0 && !forward)
-        {
-            nameIndex = w.NameLeftIndex;
-            diffNames = true;
-        }
-        else if (w.NameForwardIndex != 0 && forward)
-        {
-            nameIndex = w.NameForwardIndex;
-            diffNames = true;
-        }
-        else if (w.NameBackwardIndex != 0 && !forward)
-        {
-            nameIndex = w.NameBackwardIndex;
-            diffNames = true;
-        }
-
-        uint refIndex = w.RefIndex;
-        if (w.RefRightIndex != 0 && forward)
-        {
-            refIndex = w.RefRightIndex;
-            diffNames = true;
-        }
-        else if (w.RefLeftIndex != 0 && !forward)
-        {
-            refIndex = w.RefLeftIndex;
-            diffNames = true;
-        }
-
-        var result = new List<string>();
-
-        // Refs first (route numbers). Use the relation-updated ref if available, else the way's ref.
-        string refValue = !string.IsNullOrEmpty(refStr) ? refStr : names.Name(refIndex);
-        if (!string.IsNullOrEmpty(refValue))
-        {
-            foreach (string r in GetTagTokens(refValue))
-            {
-                if (result.Count < EdgeInfo.MaxNamesPerEdge)
-                {
-                    if (result.Count < 16)
-                    {
-                        types |= (ushort)(1 << result.Count);
-                    }
-
-                    result.Add(r);
-                }
-            }
-        }
-
-        // Street name.
-        string name = names.Name(nameIndex);
-        if (!string.IsNullOrEmpty(name))
-        {
-            result.Add(name);
-        }
-
-        // Alt name.
-        uint altNameIndex = w.AltNameIndex;
-        if (w.AltNameRightIndex != 0 && forward)
-        {
-            altNameIndex = w.AltNameRightIndex;
-            diffNames = true;
-        }
-        else if (w.AltNameLeftIndex != 0 && !forward)
-        {
-            altNameIndex = w.AltNameLeftIndex;
-            diffNames = true;
-        }
-
-        string altName = names.Name(altNameIndex);
-        if (!string.IsNullOrEmpty(altName))
-        {
-            result.Add(altName);
-        }
-
-        // Official name.
-        uint officialNameIndex = w.OfficialNameIndex;
-        if (w.OfficialNameRightIndex != 0 && forward)
-        {
-            officialNameIndex = w.OfficialNameRightIndex;
-            diffNames = true;
-        }
-        else if (w.OfficialNameLeftIndex != 0 && !forward)
-        {
-            officialNameIndex = w.OfficialNameLeftIndex;
-            diffNames = true;
-        }
-
-        string officialName = names.Name(officialNameIndex);
-        if (!string.IsNullOrEmpty(officialName))
-        {
-            result.Add(officialName);
-        }
-
-        return result;
-    }
 
     /// <summary>
     /// Builds the list of <see cref="SignInfo"/> exits/guides for a directed edge. Faithful port of

@@ -70,6 +70,19 @@ public interface IOsmPbfVisitor
 }
 
 /// <summary>
+/// Optional high-throughput visitor contract for callback-scoped way references. Implementations
+/// must consume <paramref name="nodeRefs"/> synchronously and must not retain the span.
+/// </summary>
+public interface IOsmPbfSpanVisitor : IOsmPbfVisitor
+{
+    /// <summary>Called for an OSM way without materializing its ordered node references.</summary>
+    void Way(
+        ulong id,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> tags);
+}
+
+/// <summary>
 /// Faithful OSM PBF reader. Streams an <c>.osm.pbf</c> file, inflates each blob, parses the
 /// HeaderBlock / PrimitiveBlock messages, performs string-table + delta decoding, and drives
 /// an <see cref="IOsmPbfVisitor"/>. No external OSM or protobuf dependency.
@@ -451,7 +464,7 @@ public sealed class OsmPbfReader
         double latDeg = 1e-9 * (latOffset + granularity * lat);
         double lonDeg = 1e-9 * (lonOffset + granularity * lon);
 
-        var tags = new Dictionary<string, string>(keys.Count);
+        var tags = new OsmPbfTransientTagDictionary(keys.Count);
         for (int i = 0; i < keys.Count && i < vals.Count; i++)
         {
             tags[strings[keys[i]]] = strings[vals[i]];
@@ -505,7 +518,7 @@ public sealed class OsmPbfReader
             lat += lats[n];
             lon += lons[n];
 
-            var tags = new Dictionary<string, string>();
+            var tags = new OsmPbfTransientTagDictionary();
             if (keysVals.Count > 0)
             {
                 // keys_vals: ... keyIdx, valIdx, keyIdx, valIdx, 0, keyIdx, valIdx, 0, ...
@@ -567,7 +580,7 @@ public sealed class OsmPbfReader
             refs.Add((ulong)refId);
         }
 
-        var tags = new Dictionary<string, string>(keys.Count);
+        var tags = new OsmPbfTransientTagDictionary(keys.Count);
         for (int i = 0; i < keys.Count && i < vals.Count; i++)
         {
             tags[strings[keys[i]]] = strings[vals[i]];
@@ -628,7 +641,7 @@ public sealed class OsmPbfReader
             members.Add(new OsmRelationMember((ulong)memId, type, role));
         }
 
-        var tags = new Dictionary<string, string>(keys.Count);
+        var tags = new OsmPbfTransientTagDictionary(keys.Count);
         for (int i = 0; i < keys.Count && i < vals.Count; i++)
         {
             tags[strings[keys[i]]] = strings[vals[i]];

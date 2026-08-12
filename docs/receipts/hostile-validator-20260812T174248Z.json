@@ -1,0 +1,82 @@
+{
+  "TimestampUtc": "2026-08-12T17:42:48Z",
+  "ValidatorIdentity": "GrokSubagentHostile",
+  "Workspace": "F:\\GitHub\\TruckMate",
+  "CodeUnderTest": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier",
+  "Branch": "codex/pooled-node-frontier",
+  "HeadSha": "e74dcb23f3c8d2a373e5247b5eb2a6c7a05af39b",
+  "ScratchRoot": "C:\\Users\\kingd\\AppData\\Local\\Temp\\grok-goal-845873d7e251\\implementer",
+  "Claims": [
+    {
+      "verdict": "FAIL",
+      "summary": "Dirty tip ?? artifacts/qualification/; suites green 376/157",
+      "id": "C-F0"
+    },
+    {
+      "verdict": "PASS",
+      "summary": "PooledRoadEnhanceStage/EnhanceTileDirectory + guards; f1-f3-gate-filter 38 passed",
+      "id": "C-F1"
+    },
+    {
+      "verdict": "PASS",
+      "summary": "FitWorkerCount used; SelectedDop on resource metrics; adaptive tests green",
+      "id": "C-F2"
+    },
+    {
+      "verdict": "PASS",
+      "summary": "Determinism matrix tests exist/green; CLI+request default Legacy",
+      "id": "C-F3"
+    },
+    {
+      "verdict": "FAIL",
+      "summary": "monaco proxy; performanceGatePassed=false; experimental-proxy-monaco-tn-attempt-failed",
+      "id": "C-F4"
+    },
+    {
+      "verdict": "FAIL",
+      "summary": "blocked-formal-capacity-and-pbf-missing; host 16/23; 0 successful runs",
+      "id": "C-F5"
+    },
+    {
+      "verdict": "FAIL",
+      "summary": "PR OPEN not merged; mcp done:false; promotion not_started",
+      "id": "C-F6"
+    },
+    {
+      "verdict": "PASS",
+      "summary": "Required scratch suites/reports/tip/todo-get present",
+      "id": "C-SCRATCH"
+    },
+    {
+      "verdict": "UNKNOWN",
+      "summary": "completeTurn not verified; status schema missing",
+      "id": "SESSION-LOG"
+    }
+  ],
+  "ExplicitFailList": [
+    "C-F0",
+    "C-F4",
+    "C-F5",
+    "C-F6"
+  ],
+  "AccuracyRating": 0.45,
+  "CompletenessRating": 0.85,
+  "OverallVerdict": "DISAGREE",
+  "Evidence": {
+    "GitStatus": "## codex/pooled-node-frontier...origin/codex/pooled-node-frontier`n?? artifacts/qualification/",
+    "MainSha": "fd6cce9d11fd13c4cf7daf96c737027b3f2e9049",
+    "AncestorOfMain": false,
+    "PrState": "OPEN",
+    "PrUrl": "https://github.com/sharpninja/valhalla-dotnet/pull/1",
+    "GenerationTestsDebug": "Passed 376 Failed 0",
+    "GenerationTestsRelease": "Passed 376 Failed 0",
+    "CatalogFilter": "Passed 157 Failed 0 (Debug and Release)",
+    "GateFilter38": "Passed 38 Failed 0",
+    "NashvilleStatus": "experimental-proxy-monaco-tn-attempt-failed",
+    "NashvillePerformanceGate": false,
+    "NashvilleMemoryGate": true,
+    "L48Status": "blocked-formal-capacity-and-pbf-missing",
+    "L48Machine": "16 vCPU / 23 GiB / 512 diskGiB",
+    "McpTodoDone": false
+  }
+}

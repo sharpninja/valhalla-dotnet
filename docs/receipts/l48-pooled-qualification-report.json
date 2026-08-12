@@ -1,0 +1,60 @@
+{
+  "pbfSha256": "NONE",
+  "notes": "Host 16 vCPU / 23.4 GiB does not meet formal L48 bar (32/64/1TiB). us-lower48.osm.pbf absent. Desktop probe must not substitute formal L48.",
+  "configPath": "benchmarks/config/lower48-3.8.3.json",
+  "machine": {
+    "diskGiB": 512,
+    "vCpu": 16,
+    "hostName": "PAYTON-LEGION2",
+    "memoryGiB": 23
+  },
+  "branchSha": "e74dcb23f3c8d2a373e5247b5eb2a6c7a05af39b",
+  "campaign": "Lower48",
+  "pbfPath": "NOT_PRESENT",
+  "pipeline": "PooledFrontier",
+  "oracle": "OfficialValhalla-3.8.3",
+  "runs": [
+    {
+      "success": false,
+      "durationSeconds": 0,
+      "outputTreeSha256": "NONE",
+      "peakWorkingSetBytes": 0,
+      "peakLiveNodes": 0,
+      "role": "measured",
+      "failure": "blocked-formal-capacity-and-pbf-missing",
+      "pipeline": "PooledFrontier",
+      "index": 0
+    },
+    {
+      "success": false,
+      "durationSeconds": 0,
+      "outputTreeSha256": "NONE",
+      "peakWorkingSetBytes": 0,
+      "peakLiveNodes": 0,
+      "role": "measured",
+      "failure": "blocked",
+      "pipeline": "PooledFrontier",
+      "index": 1
+    },
+    {
+      "success": false,
+      "durationSeconds": 0,
+      "outputTreeSha256": "NONE",
+      "peakWorkingSetBytes": 0,
+      "peakLiveNodes": 0,
+      "role": "measured",
+      "failure": "blocked",
+      "pipeline": "PooledFrontier",
+      "index": 2
+    }
+  ],
+  "verdict": {
+    "performanceRatioVsOfficial": null,
+    "performanceGatePassed": false,
+    "semanticGatePassed": false,
+    "status": "blocked-formal-capacity-and-pbf-missing",
+    "memoryGatePassed": false,
+    "estimatedGcpCostUsd": null,
+    "memoryRatioVsOfficial": null
+  }
+}

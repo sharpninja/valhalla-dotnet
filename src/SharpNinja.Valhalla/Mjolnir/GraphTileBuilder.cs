@@ -1,8 +1,8 @@
-// Faithful C# port of Valhalla mjolnir graphtilebuilder.h + src/mjolnir/graphtilebuilder.cc @ 3.7.0
+// Faithful C# port of Valhalla mjolnir graphtilebuilder.h + src/mjolnir/graphtilebuilder.cc
+// @ 3.8.3 commit a60c7cbfc83e073f50887cd27e0109d02e6b64e5
 // (the WRITE side; the build/construct path plus the deserialize-existing-tile path + complex
-// restriction serialization used by the RestrictionBuilder - excludes transit/bss/elevation/
-// predicted-speed updates, JSON, and bin edges, which are out of scope for the auto/truck graph
-// build).
+// restriction serialization used by the RestrictionBuilder, plus predicted-speed profile updates.
+// Transit, bike-share, elevation, JSON, and bin-edge construction remain separate generation stages.
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/graphtilebuilder.h
 //   F:/github/valhalla/src/mjolnir/graphtilebuilder.cc
@@ -25,10 +25,13 @@
 //   [text list]            (null-terminated strings)
 //   [padding to 8-byte boundary]
 //   [LaneConnectivity[]]    (24 bytes each)       - sorted
+//   [predicted-speed offsets] (4 bytes per directed edge, when profiles exist)
+//   [predicted-speed profiles] (200 int16 coefficients per unique profile)
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using SharpNinja.Valhalla.Baldr;
@@ -48,6 +51,11 @@ public sealed partial class GraphTileBuilder
     private const int DirectedEdgeSize = DirectedEdge.SizeOf;        // 48
     private const int DirectedEdgeExtSize = DirectedEdgeExt.SizeOf;  // 8
     private const int AccessRestrictionSize = 16;
+    private const int TransitDepartureSize = 24;
+    private const int TransitStopSize = 8;
+    private const int TransitRouteSize = 40;
+    private const int TransitScheduleSize = 16;
+    private const int TransitTransferSize = 12;
     private const int SignSize = 8;
     private const int TurnLanesSize = 8;
     private const int AdminSize = 16;
@@ -60,11 +68,22 @@ public sealed partial class GraphTileBuilder
     private readonly List<DirectedEdgeExt> _directedEdgesExtBuilder = new();
     private readonly List<NodeTransition> _transitionsBuilder = new();
     private readonly List<AccessRestriction> _accessRestrictionBuilder = new();
+    private readonly List<TransitDeparture> _departuresBuilder = new();
+    private readonly List<TransitStop> _transitStopsBuilder = new();
+    private readonly List<TransitRoute> _transitRoutesBuilder = new();
+    private readonly List<TransitSchedule> _transitSchedulesBuilder = new();
+    private readonly List<TransitTransfer> _transitTransfersBuilder = new();
     private readonly List<Sign> _signsBuilder = new();
     private readonly List<Admin> _adminsBuilder = new();
     private readonly Dictionary<string, ulong> _adminInfoOffsetMap = new(StringComparer.Ordinal);
     private readonly List<TurnLanes> _turnlanesBuilder = new();
     private readonly List<LaneConnectivity> _laneConnectivityBuilder = new();
+
+    // Historical/predicted speed profiles. The offset list has one entry per directed edge when
+    // profiles are present; profile offsets are int16 coefficient indexes, matching Valhalla 3.8.3.
+    private readonly List<uint> _speedProfileOffsets = new();
+    private readonly List<short> _speedProfiles = new();
+    private readonly Dictionary<ulong, List<uint>> _speedProfileIndex = new();
 
     // The forward / reverse complex restriction lists (empty in the initial build; populated by the
     // RestrictionBuilder over a deserialized tile).
@@ -79,7 +98,7 @@ public sealed partial class GraphTileBuilder
     // Text list offset and map.
     private uint _textListOffset;
     private readonly Dictionary<string, uint> _textOffsetMap = new(StringComparer.Ordinal);
-    private readonly List<string> _textListBuilder = new();
+    private readonly List<byte[]> _textListBuilder = new();
 
     // The source tile when deserializing (null for a fresh build). The C++ GraphTileBuilder derives
     // from GraphTile, so methods like edgeinfo(de) read the original tile data; here we keep the
@@ -96,7 +115,7 @@ public sealed partial class GraphTileBuilder
         _headerBuilder.SetGraphid(graphid);
 
         // Not deserializing: create builders for everything.
-        _textListBuilder.Add(string.Empty);
+        _textListBuilder.Add(Array.Empty<byte>());
         _textOffsetMap[string.Empty] = 0;
         _textListOffset = 1;
 
@@ -159,6 +178,35 @@ public sealed partial class GraphTileBuilder
 
         // Create access restriction list.
         _accessRestrictionBuilder.AddRange(tile.GetAllAccessRestrictions());
+
+        // Copy transit records and preserve every transit-owned text-list offset.
+        foreach (TransitDeparture departure in tile.GetTransitDepartures())
+        {
+            _departuresBuilder.Add(departure);
+            nameOffsets.Add(departure.HeadsignOffset);
+        }
+
+        foreach (TransitStop stop in tile.GetTransitStops())
+        {
+            _transitStopsBuilder.Add(stop);
+            nameOffsets.Add(stop.OneStopOffset);
+            nameOffsets.Add(stop.NameOffset);
+        }
+
+        foreach (TransitRoute route in tile.GetTransitRoutes())
+        {
+            _transitRoutesBuilder.Add(route);
+            nameOffsets.Add(route.OneStopOffset);
+            nameOffsets.Add(route.OperatedByOneStopIdOffset);
+            nameOffsets.Add(route.OperatedByNameOffset);
+            nameOffsets.Add(route.OperatedByWebsiteOffset);
+            nameOffsets.Add(route.ShortNameOffset);
+            nameOffsets.Add(route.LongNameOffset);
+            nameOffsets.Add(route.DescriptionOffset);
+        }
+
+        _transitSchedulesBuilder.AddRange(tile.GetTransitSchedules());
+        _transitTransfersBuilder.AddRange(tile.GetTransitTransfers());
 
         // Create sign builders and add their text offsets to the set.
         foreach (Sign sign in tile.GetAllSigns())
@@ -259,12 +307,13 @@ public sealed partial class GraphTileBuilder
                 width = textList.Length - (int)thisOffset;
             }
 
-            // Keep the bytes for this entry, removing the null terminator (added back in StoreTileData).
-            string entryText = BytesToString(textList, (int)thisOffset, width - 1);
-            _textListBuilder.Add(entryText);
-            if (!_textOffsetMap.ContainsKey(entryText))
+            // Keep the exact bytes for this entry, removing the null terminator (added back in StoreTileData).
+            byte[] entryBytes = textList.AsSpan((int)thisOffset, width - 1).ToArray();
+            string entryKey = TextKey(entryBytes);
+            _textListBuilder.Add(entryBytes);
+            if (!_textOffsetMap.ContainsKey(entryKey))
             {
-                _textOffsetMap[entryText] = thisOffset;
+                _textOffsetMap[entryKey] = thisOffset;
             }
 
             _textListOffset += (uint)(width); // length-of-entry + null terminator
@@ -272,6 +321,42 @@ public sealed partial class GraphTileBuilder
 
         // Lane connectivity.
         _laneConnectivityBuilder.AddRange(tile.GetAllLaneConnectivity());
+
+        // Historical/predicted speed profiles. Preserve existing profiles when a tile is
+        // deserialized for a later mutation stage.
+        if (tile.Header().PredictedspeedsCount() > 0)
+        {
+            uint[] offsets = tile.CopyPredictedSpeedOffsets();
+            short[] profiles = tile.CopyPredictedSpeedProfiles();
+            int expectedProfileValues = checked(
+                (int)(tile.Header().PredictedspeedsCount() *
+                      PredictedSpeedConstants.CoefficientCount));
+            if (offsets.Length != edgeCount || profiles.Length != expectedProfileValues)
+            {
+                throw new InvalidDataException(
+                    "The predicted-speed section does not match the tile header.");
+            }
+
+            _speedProfileOffsets.AddRange(offsets);
+            _speedProfiles.AddRange(profiles);
+            for (int edgeIndex = 0; edgeIndex < _directedEdgesBuilder.Count; edgeIndex++)
+            {
+                if (!_directedEdgesBuilder[edgeIndex].HasPredictedSpeed)
+                {
+                    continue;
+                }
+
+                uint profileOffset = offsets[edgeIndex];
+                if (profileOffset + PredictedSpeedConstants.CoefficientCount >
+                    profiles.Length)
+                {
+                    throw new InvalidDataException(
+                        $"Predicted-speed offset {profileOffset} is outside the profile section.");
+                }
+
+                IndexPredictedSpeedProfile(profileOffset);
+            }
+        }
 
         // Complex restrictions (forward / reverse).
         _complexRestrictionForwardBuilder.AddRange(
@@ -324,15 +409,140 @@ public sealed partial class GraphTileBuilder
         return v;
     }
 
-    private static string BytesToString(byte[] buffer, int offset, int length)
+    private static string TextKey(ReadOnlySpan<byte> value) => Convert.ToHexString(value);
+
+    /// <summary>
+    /// Adds a compressed historical/predicted speed profile for a directed edge. Duplicate
+    /// coefficient arrays share one profile offset, matching Valhalla 3.8.3.
+    /// </summary>
+    public void AddPredictedSpeed(
+        uint directedEdgeIndex,
+        ReadOnlySpan<short> coefficients,
+        int predictedCountHint = 0)
     {
-        var sb = new System.Text.StringBuilder(length);
-        for (int i = 0; i < length; i++)
+        if (directedEdgeIndex >= _directedEdgesBuilder.Count)
         {
-            sb.Append((char)buffer[offset + i]);
+            throw new ArgumentOutOfRangeException(
+                nameof(directedEdgeIndex),
+                "GraphTileBuilder AddPredictedSpeed index is out of bounds.");
         }
 
-        return sb.ToString();
+        if (coefficients.Length != PredictedSpeedConstants.CoefficientCount)
+        {
+            throw new ArgumentException(
+                $"A predicted-speed profile requires exactly " +
+                $"{PredictedSpeedConstants.CoefficientCount} coefficients.",
+                nameof(coefficients));
+        }
+
+        if (_speedProfileOffsets.Count == 0)
+        {
+            _speedProfileOffsets.AddRange(
+                Enumerable.Repeat(0u, _directedEdgesBuilder.Count));
+            if (predictedCountHint > 0)
+            {
+                _speedProfiles.EnsureCapacity(
+                    checked(predictedCountHint *
+                            (int)PredictedSpeedConstants.CoefficientCount));
+                _speedProfileIndex.EnsureCapacity(predictedCountHint);
+            }
+        }
+        else if (_speedProfileOffsets.Count != _directedEdgesBuilder.Count)
+        {
+            throw new InvalidOperationException(
+                "Directed edges cannot be added after predicted-speed profiles are indexed.");
+        }
+
+        ulong hash = ComputePredictedSpeedHash(coefficients);
+        if (_speedProfileIndex.TryGetValue(hash, out List<uint>? offsets))
+        {
+            ReadOnlySpan<short> storedProfiles = CollectionsMarshal.AsSpan(_speedProfiles);
+            foreach (uint profileOffset in offsets)
+            {
+                if (storedProfiles.Slice(
+                        checked((int)profileOffset),
+                        checked((int)PredictedSpeedConstants.CoefficientCount))
+                    .SequenceEqual(coefficients))
+                {
+                    _speedProfileOffsets[(int)directedEdgeIndex] = profileOffset;
+                    return;
+                }
+            }
+        }
+
+        uint newOffset = checked((uint)_speedProfiles.Count);
+        foreach (short coefficient in coefficients)
+        {
+            _speedProfiles.Add(coefficient);
+        }
+
+        _speedProfileOffsets[(int)directedEdgeIndex] = newOffset;
+        IndexPredictedSpeedProfile(newOffset, hash);
+    }
+
+    /// <summary>
+    /// Reorders predicted-speed offsets after a mutation stage rebuilds directed-edge indexes.
+    /// New edges use a negative source index and receive an empty offset because they do not carry
+    /// predicted speed data.
+    /// </summary>
+    public void RemapPredictedSpeedOffsets(IReadOnlyList<int> sourceEdgeIndexes)
+    {
+        ArgumentNullException.ThrowIfNull(sourceEdgeIndexes);
+        if (_speedProfileOffsets.Count == 0)
+        {
+            return;
+        }
+
+        uint[] current = _speedProfileOffsets.ToArray();
+        _speedProfileOffsets.Clear();
+        _speedProfileOffsets.EnsureCapacity(sourceEdgeIndexes.Count);
+        foreach (int sourceIndex in sourceEdgeIndexes)
+        {
+            if (sourceIndex < 0)
+            {
+                _speedProfileOffsets.Add(0);
+                continue;
+            }
+
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(sourceIndex, current.Length);
+            _speedProfileOffsets.Add(current[sourceIndex]);
+        }
+    }
+
+    private void IndexPredictedSpeedProfile(uint profileOffset)
+    {
+        ReadOnlySpan<short> profile = CollectionsMarshal.AsSpan(_speedProfiles).Slice(
+            checked((int)profileOffset),
+            checked((int)PredictedSpeedConstants.CoefficientCount));
+        IndexPredictedSpeedProfile(profileOffset, ComputePredictedSpeedHash(profile));
+    }
+
+    private void IndexPredictedSpeedProfile(uint profileOffset, ulong hash)
+    {
+        if (!_speedProfileIndex.TryGetValue(hash, out List<uint>? offsets))
+        {
+            offsets = new List<uint>();
+            _speedProfileIndex.Add(hash, offsets);
+        }
+
+        if (!offsets.Contains(profileOffset))
+        {
+            offsets.Add(profileOffset);
+        }
+    }
+
+    private static ulong ComputePredictedSpeedHash(ReadOnlySpan<short> coefficients)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        ulong hash = offsetBasis;
+        foreach (short coefficient in coefficients)
+        {
+            hash ^= unchecked((ushort)coefficient);
+            hash *= prime;
+        }
+
+        return hash;
     }
 
     /// <summary>Gets the header builder. Faithful port of <c>header_builder()</c>.</summary>
@@ -354,6 +564,21 @@ public sealed partial class GraphTileBuilder
     /// </summary>
     public List<NodeTransition> Transitions => _transitionsBuilder;
 
+    /// <summary>Gets the mutable transit departure list.</summary>
+    public List<TransitDeparture> Departures => _departuresBuilder;
+
+    /// <summary>Gets the mutable transit stop list.</summary>
+    public List<TransitStop> TransitStops => _transitStopsBuilder;
+
+    /// <summary>Gets the mutable transit route list.</summary>
+    public List<TransitRoute> TransitRoutes => _transitRoutesBuilder;
+
+    /// <summary>Gets the mutable transit schedule list.</summary>
+    public List<TransitSchedule> TransitSchedules => _transitSchedulesBuilder;
+
+    /// <summary>Gets the mutable transit transfer list.</summary>
+    public List<TransitTransfer> TransitTransfers => _transitTransfersBuilder;
+
     /// <summary>Gets the current list of signs (read-only view).</summary>
     public IReadOnlyList<Sign> Signs => _signsBuilder;
 
@@ -365,6 +590,22 @@ public sealed partial class GraphTileBuilder
 
     /// <summary>Gets the current list of access restrictions (read-only view).</summary>
     public IReadOnlyList<AccessRestriction> AccessRestrictions => _accessRestrictionBuilder;
+
+    /// <summary>Writes back a mutated sign builder at the index.</summary>
+    public void SetSignBuilder(int index, Sign sign)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, _signsBuilder.Count);
+        _signsBuilder[index] = sign;
+    }
+
+    /// <summary>Writes back a mutated access-restriction builder at the index.</summary>
+    public void SetAccessRestrictionBuilder(int index, AccessRestriction restriction)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+            index,
+            _accessRestrictionBuilder.Count);
+        _accessRestrictionBuilder[index] = restriction;
+    }
 
     /// <summary>Gets the admin builder at the given index. Faithful port of <c>admins_builder(idx)</c>.</summary>
     public Admin AdminsBuilder(int idx)
@@ -492,15 +733,37 @@ public sealed partial class GraphTileBuilder
             return 0;
         }
 
-        if (_textOffsetMap.TryGetValue(name, out uint existing))
+        return AddText(System.Text.Encoding.UTF8.GetBytes(name));
+    }
+
+    private uint AddEncodedName(string encodedBytes)
+    {
+        if (string.IsNullOrEmpty(encodedBytes))
+        {
+            return 0;
+        }
+
+        byte[] bytes = GC.AllocateUninitializedArray<byte>(encodedBytes.Length);
+        for (int index = 0; index < encodedBytes.Length; index++)
+        {
+            bytes[index] = checked((byte)encodedBytes[index]);
+        }
+
+        return AddText(bytes);
+    }
+
+    private uint AddText(byte[] bytes)
+    {
+        string key = TextKey(bytes);
+        if (_textOffsetMap.TryGetValue(key, out uint existing))
         {
             return existing;
         }
 
         uint offset = _textListOffset;
-        _textListBuilder.Add(name);
-        _textOffsetMap[name] = _textListOffset;
-        _textListOffset += (uint)(ByteLength(name) + 1);
+        _textListBuilder.Add(bytes);
+        _textOffsetMap[key] = offset;
+        _textListOffset += checked((uint)bytes.Length + 1);
         return offset;
     }
 
@@ -542,7 +805,7 @@ public sealed partial class GraphTileBuilder
                         sign.Type == Sign.Type.JunctionName || sign.Type == Sign.Type.TollName;
                     uint count = (sign.LinguisticStartIndex + sign.LinguisticCount) - 1;
                     uint signOffset =
-                        AddName(ProcessLinguisticHeader(sign.LinguisticStartIndex, count, linguistics, i));
+                        AddEncodedName(ProcessLinguisticHeader(sign.LinguisticStartIndex, count, linguistics, i));
                     _signsBuilder.Add(new Sign(idx, Sign.Type.Linguistic, linguisticOnNode, true, signOffset));
                 }
             }
@@ -635,7 +898,7 @@ public sealed partial class GraphTileBuilder
 
                 if (!string.IsNullOrEmpty(name))
                 {
-                    var info = new NameInfo(AddName(name), 0, false, true, 0);
+                    var info = new NameInfo(AddEncodedName(name), 0, false, true, 0);
                     nameInfoList.Add(info);
                     ++nameCount;
                 }
@@ -679,7 +942,7 @@ public sealed partial class GraphTileBuilder
                     sb.Append(name);
                 }
 
-                var ni = new NameInfo(AddName(encodeTag + sb.ToString()), 0, false, true, 0);
+                var ni = new NameInfo(AddEncodedName(encodeTag + sb.ToString()), 0, false, true, 0);
                 nameInfoList.Add(ni);
                 ++nameCount;
             }
@@ -692,7 +955,10 @@ public sealed partial class GraphTileBuilder
     /// </summary>
     public byte[] StoreTileData()
     {
-        using var inMem = new MemoryStream();
+        int serializedSize = GetSerializedSize();
+        byte[] blob = GC.AllocateUninitializedArray<byte>(serializedSize);
+        using var inMem = new MemoryStream(blob, writable: true);
+        inMem.Position = GraphTileHeaderSize;
 
         // Write the nodes.
         _headerBuilder.SetNodecount((uint)_nodesBuilder.Count);
@@ -734,12 +1000,36 @@ public sealed partial class GraphTileBuilder
             WriteStruct(inMem, ar);
         }
 
-        // Transit departures / stops / routes / schedules are excluded (always 0).
-        _headerBuilder.SetDeparturecount(0);
-        _headerBuilder.SetStopcount(0);
-        _headerBuilder.SetRoutecount(0);
-        _headerBuilder.SetSchedulecount(0);
-        _headerBuilder.SetTransfercount(0);
+        // Write packed Valhalla 3.8.3 transit records in their canonical section order.
+        _headerBuilder.SetDeparturecount((uint)_departuresBuilder.Count);
+        foreach (TransitDeparture departure in _departuresBuilder)
+        {
+            WriteStruct(inMem, departure);
+        }
+
+        _headerBuilder.SetStopcount((uint)_transitStopsBuilder.Count);
+        foreach (TransitStop stop in _transitStopsBuilder)
+        {
+            WriteStruct(inMem, stop);
+        }
+
+        _headerBuilder.SetRoutecount((uint)_transitRoutesBuilder.Count);
+        foreach (TransitRoute route in _transitRoutesBuilder)
+        {
+            WriteStruct(inMem, route);
+        }
+
+        _headerBuilder.SetSchedulecount((uint)_transitSchedulesBuilder.Count);
+        foreach (TransitSchedule schedule in _transitSchedulesBuilder)
+        {
+            WriteStruct(inMem, schedule);
+        }
+
+        _headerBuilder.SetTransfercount((uint)_transitTransfersBuilder.Count);
+        foreach (TransitTransfer transfer in _transitTransfersBuilder)
+        {
+            WriteStruct(inMem, transfer);
+        }
 
         // Write the signs (stable sort by index then type).
         StableSortSigns(_signsBuilder);
@@ -772,6 +1062,11 @@ public sealed partial class GraphTileBuilder
                    (_directedEdgesBuilder.Count * DirectedEdgeSize) +
                    (_directedEdgesExtBuilder.Count * DirectedEdgeExtSize) +
                    (_accessRestrictionBuilder.Count * AccessRestrictionSize) +
+                   (_departuresBuilder.Count * TransitDepartureSize) +
+                   (_transitStopsBuilder.Count * TransitStopSize) +
+                   (_transitRoutesBuilder.Count * TransitRouteSize) +
+                   (_transitSchedulesBuilder.Count * TransitScheduleSize) +
+                   (_transitTransfersBuilder.Count * TransitTransferSize) +
                    (_signsBuilder.Count * SignSize) +
                    (_turnlanesBuilder.Count * TurnLanesSize) +
                    (_adminsBuilder.Count * AdminSize));
@@ -806,13 +1101,9 @@ public sealed partial class GraphTileBuilder
 
         // Write the names.
         _headerBuilder.SetTextlistOffset((uint)(_headerBuilder.EdgeinfoOffset() + edgeInfoSize));
-        foreach (string text in _textListBuilder)
+        foreach (byte[] text in _textListBuilder)
         {
-            for (int i = 0; i < text.Length; i++)
-            {
-                inMem.WriteByte((byte)text[i]);
-            }
-
+            inMem.Write(text);
             inMem.WriteByte(0); // null terminator
         }
 
@@ -833,19 +1124,114 @@ public sealed partial class GraphTileBuilder
             WriteStruct(inMem, lc);
         }
 
-        // Set the end offset.
-        _headerBuilder.SetEndOffset(
+        uint laneConnectivityEnd =
             (uint)(_headerBuilder.LaneConnectivityOffset() +
-                   (_laneConnectivityBuilder.Count * LaneConnectivitySize)));
+                   (_laneConnectivityBuilder.Count * LaneConnectivitySize));
 
-        // Assemble: header followed by the rest of the tile from the in-memory buffer.
-        byte[] body = inMem.ToArray();
-        var blob = new byte[GraphTileHeaderSize + body.Length];
+        if (_speedProfiles.Count > 0)
+        {
+            if (_speedProfileOffsets.Count != _directedEdgesBuilder.Count ||
+                _speedProfiles.Count % PredictedSpeedConstants.CoefficientCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Predicted-speed indexes and profiles are inconsistent.");
+            }
+
+            _headerBuilder.SetPredictedspeedsOffset(laneConnectivityEnd);
+            _headerBuilder.SetPredictedspeedsCount(
+                checked((uint)_speedProfiles.Count /
+                        PredictedSpeedConstants.CoefficientCount));
+            foreach (uint offset in _speedProfileOffsets)
+            {
+                WriteStruct(inMem, offset);
+            }
+
+            foreach (short coefficient in _speedProfiles)
+            {
+                WriteStruct(inMem, coefficient);
+            }
+        }
+        else
+        {
+            _headerBuilder.SetPredictedspeedsOffset(0);
+            _headerBuilder.SetPredictedspeedsCount(0);
+        }
+
+        _headerBuilder.SetEndOffset(checked((uint)inMem.Position));
+
+        if (inMem.Position != blob.Length)
+        {
+            throw new InvalidOperationException(
+                $"Graph tile serialization wrote {inMem.Position} of {blob.Length} bytes.");
+        }
+
+        ulong buildIdBits = (ulong)_headerBuilder.BuildId() << GraphTileHeader.TileHashBits;
+        ulong tileHash = GraphTileChecksum.ComputeTileHash(blob.AsSpan(GraphTileHeaderSize));
+        _headerBuilder.SetRawChecksum(buildIdBits | tileHash);
         _headerBuilder.AsSpan().CopyTo(blob);
-        Array.Copy(body, 0, blob, GraphTileHeaderSize, body.Length);
         return blob;
     }
 
+    private int GetSerializedSize()
+    {
+        int extendedEdgeCount =
+            _directedEdgesExtBuilder.Count > 0 &&
+            _directedEdgesExtBuilder.Count == _directedEdgesBuilder.Count
+                ? _directedEdgesExtBuilder.Count
+                : 0;
+        checked
+        {
+            long bodySize =
+                ((long)_nodesBuilder.Count * NodeInfoSize) +
+                ((long)_transitionsBuilder.Count * NodeTransitionSize) +
+                ((long)_directedEdgesBuilder.Count * DirectedEdgeSize) +
+                ((long)extendedEdgeCount * DirectedEdgeExtSize) +
+                ((long)_accessRestrictionBuilder.Count * AccessRestrictionSize) +
+                ((long)_departuresBuilder.Count * TransitDepartureSize) +
+                ((long)_transitStopsBuilder.Count * TransitStopSize) +
+                ((long)_transitRoutesBuilder.Count * TransitRouteSize) +
+                ((long)_transitSchedulesBuilder.Count * TransitScheduleSize) +
+                ((long)_transitTransfersBuilder.Count * TransitTransferSize) +
+                ((long)_signsBuilder.Count * SignSize) +
+                ((long)_turnlanesBuilder.Count * TurnLanesSize) +
+                ((long)_adminsBuilder.Count * AdminSize);
+
+            foreach (ComplexRestrictionBuilder restriction in
+                     _complexRestrictionForwardBuilder)
+            {
+                bodySize += restriction.SizeOf();
+            }
+
+            foreach (ComplexRestrictionBuilder restriction in
+                     _complexRestrictionReverseBuilder)
+            {
+                bodySize += restriction.SizeOf();
+            }
+
+            foreach (EdgeInfoBuilder edgeInfo in _edgeinfoList)
+            {
+                bodySize += edgeInfo.SizeOf();
+            }
+
+            foreach (byte[] text in _textListBuilder)
+            {
+                bodySize += text.Length + 1L;
+            }
+
+            long padding = (8 - (bodySize % 8)) % 8;
+            bodySize += padding +
+                ((long)_laneConnectivityBuilder.Count * LaneConnectivitySize);
+
+            if (_speedProfiles.Count > 0)
+            {
+                bodySize +=
+                    ((long)_directedEdgesBuilder.Count * sizeof(uint)) +
+                    ((long)_speedProfiles.Count * sizeof(short));
+            }
+
+            return checked((int)(GraphTileHeaderSize + bodySize));
+        }
+    }
     /// <summary>
     /// Serializes the tile and writes it to disk under <paramref name="tileDir"/> as an uncompressed
     /// <c>.gph</c> file at the path derived from the tile's GraphId. Faithful port of the disk-writing
@@ -864,12 +1250,7 @@ public sealed partial class GraphTileBuilder
 
         string tmp = filename + "_" + Environment.CurrentManagedThreadId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".tmp";
         File.WriteAllBytes(tmp, blob);
-        if (File.Exists(filename))
-        {
-            File.Delete(filename);
-        }
-
-        File.Move(tmp, filename);
+        File.Move(tmp, filename, overwrite: true);
     }
 
     // Edge tuple for sharing edges that have common nodes and edgeindex (orders nodea/nodeb).
@@ -947,13 +1328,10 @@ public sealed partial class GraphTileBuilder
         return v;
     }
 
-    // Number of raw bytes a name occupies in the text list (1 byte per char, matching C++ string).
-    private static int ByteLength(string name) => name.Length;
-
     private static void WriteStruct<T>(Stream output, T value)
         where T : unmanaged
     {
-        Span<byte> buf = stackalloc byte[Marshal.SizeOf<T>()];
+        Span<byte> buf = stackalloc byte[Unsafe.SizeOf<T>()];
         MemoryMarshal.Write(buf, in value);
         output.Write(buf);
     }

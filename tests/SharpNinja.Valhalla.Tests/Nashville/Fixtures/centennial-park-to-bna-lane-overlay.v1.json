@@ -2,26 +2,26 @@
   "descriptor": {
     "schemaVersion": 1,
     "datasetId": "sharpninja-test-centennial-park-bna-lane-overlay",
-    "datasetVersion": "2026.07.18.1",
-    "graphSignature": "sha256:0346EEBE7ED73A06AD67960FACF751ED6CD7AA18F62BF4F35851F1F1E3F6C663",
+    "datasetVersion": "2026.08.10.1",
+    "graphSignature": "sha256:08A95FF1A7C80E0CF0C8ABBD5DE2282978694C1CE87EEEFDA2AD0EA80366B54E",
     "provenance": "Test",
     "sourceReference": "operator://centennial-park-to-bna/2026-07-18"
   },
   "edges": [
     {
-      "canonicalDirectedEdgeId": 447951689704,
+      "canonicalDirectedEdgeId": 441307912168,
       "canonicalStartNodeId": 187938396136,
       "canonicalEndNodeId": 181261064168,
       "laneCount": 3
     },
     {
-      "canonicalDirectedEdgeId": 429496752104,
+      "canonicalDirectedEdgeId": 423490508776,
       "canonicalStartNodeId": 181261064168,
       "canonicalEndNodeId": 171463170024,
       "laneCount": 3
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "canonicalStartNodeId": 171026962408,
       "canonicalEndNodeId": 204682057704,
       "laneCount": 5
@@ -29,8 +29,8 @@
   ],
   "transitions": [
     {
-      "fromCanonicalDirectedEdgeId": 447951689704,
-      "toCanonicalDirectedEdgeId": 429496752104,
+      "fromCanonicalDirectedEdgeId": 441307912168,
+      "toCanonicalDirectedEdgeId": 423490508776,
       "sharedCanonicalNodeId": 181261064168,
       "options": [
         { "fromLane": 1, "toLane": 1 },
@@ -44,7 +44,7 @@
   ],
   "frictionPoints": [
     {
-      "canonicalDirectedEdgeId": 429496752104,
+      "canonicalDirectedEdgeId": 423490508776,
       "laneNumber": 1,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "AdjacentMerge",
@@ -53,7 +53,7 @@
       "rationale": "Curated I-440/I-24 merge exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 429496752104,
+      "canonicalDirectedEdgeId": 423490508776,
       "laneNumber": 2,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "AdjacentMerge",
@@ -62,7 +62,7 @@
       "rationale": "Curated I-440/I-24 merge exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 429496752104,
+      "canonicalDirectedEdgeId": 423490508776,
       "laneNumber": 3,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "AdjacentMerge",
@@ -71,7 +71,7 @@
       "rationale": "Curated I-440/I-24 merge exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "laneNumber": 1,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "Weave",
@@ -80,7 +80,7 @@
       "rationale": "Curated I-440-to-I-40 interchange weave exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "laneNumber": 2,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "Weave",
@@ -89,7 +89,7 @@
       "rationale": "Curated I-440-to-I-40 interchange weave exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "laneNumber": 3,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "Weave",
@@ -98,7 +98,7 @@
       "rationale": "Curated I-440-to-I-40 interchange weave exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "laneNumber": 4,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "Weave",
@@ -107,7 +107,7 @@
       "rationale": "Curated I-440-to-I-40 interchange weave exposure applies to every through lane."
     },
     {
-      "canonicalDirectedEdgeId": 403223631848,
+      "canonicalDirectedEdgeId": 397519378408,
       "laneNumber": 5,
       "distanceAlongEdgeMeters": 50.0,
       "kind": "Weave",

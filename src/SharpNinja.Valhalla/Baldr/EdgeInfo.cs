@@ -232,37 +232,37 @@ public sealed class EdgeInfo : IEquatable<EdgeInfo>
                 return StrLen(buffer, ptr) + 1;
 
             case TaggedValue.Landmark:
-            {
-                // Fixed 9-byte header + null-terminated name + null terminator.
-                // C++: std::string landmark_name = ptr + 10; -> name starts at ptr + 10.
-                int nameLen = StrLen(buffer, ptr + 10);
-                return nameLen + 10 + 1;
-            }
+                {
+                    // Fixed 9-byte header + null-terminated name + null terminator.
+                    // C++: std::string landmark_name = ptr + 10; -> name starts at ptr + 10.
+                    int nameLen = StrLen(buffer, ptr + 10);
+                    return nameLen + 10 + 1;
+                }
 
             case TaggedValue.Levels:
             case TaggedValue.OSMNodeIds:
-            {
-                // Tag byte + varint size + data + null terminator.
-                int start = ptr + 1;
-                int size = ParseVarint(buffer, ref start);
-                return (start + size) - ptr + 1;
-            }
+                {
+                    // Tag byte + varint size + data + null terminator.
+                    int start = ptr + 1;
+                    int size = ParseVarint(buffer, ref start);
+                    return (start + size) - ptr + 1;
+                }
 
             case TaggedValue.ConditionalSpeedLimits:
                 // Tag byte + fixed-size struct + null terminator.
                 return 1 + ConditionalSpeedLimitSize + 1;
 
             case TaggedValue.Linguistic:
-            {
-                int current = ptr + 1; // Skip the tag byte.
-                while (buffer[current] != 0)
                 {
-                    var header = ReadLinguisticHeader(buffer, current);
-                    current += header.Length + LinguisticConstants.HeaderSize;
-                }
+                    int current = ptr + 1; // Skip the tag byte.
+                    while (buffer[current] != 0)
+                    {
+                        var header = ReadLinguisticHeader(buffer, current);
+                        current += header.Length + LinguisticConstants.HeaderSize;
+                    }
 
-                return (current - ptr) + 1;
-            }
+                    return (current - ptr) + 1;
+                }
 
             default:
                 throw new InvalidOperationException(
@@ -562,17 +562,16 @@ public sealed class EdgeInfo : IEquatable<EdgeInfo>
                         byte phoneticAlphabet = header.PhoneticAlphabet;
                         byte language = header.Language;
 
-                        var pron = new StringBuilder(header.Length);
-                        for (int k = 0; k < header.Length; k++)
-                        {
-                            pron.Append((char)_namesList[name + LinguisticConstants.HeaderSize + k]);
-                        }
+                        string pronunciation = Encoding.UTF8.GetString(
+                            _namesList,
+                            name + LinguisticConstants.HeaderSize,
+                            header.Length);
 
                         name += header.Length + LinguisticConstants.HeaderSize;
                         byte nameIndex = header.NameIndex;
 
                         (byte Language, byte PhoneticAlphabet, string Pronunciation) attributes =
-                            (language, phoneticAlphabet, pron.ToString());
+                            (language, phoneticAlphabet, pronunciation);
 
                         if (!map.TryGetValue(nameIndex, out var existing))
                         {

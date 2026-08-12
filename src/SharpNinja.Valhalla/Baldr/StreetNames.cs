@@ -171,6 +171,27 @@ public class StreetNames : List<StreetName>
         return commonBaseNames;
     }
 
+    /// <summary>
+    /// Returns whether any name shares a base name with a name in
+    /// <paramref name="otherStreetNames"/> without materializing the matching-name collection.
+    /// </summary>
+    public bool HasCommonBaseName(StreetNames otherStreetNames)
+    {
+        ArgumentNullException.ThrowIfNull(otherStreetNames);
+        foreach (StreetName streetName in this)
+        {
+            foreach (StreetName otherStreetName in otherStreetNames)
+            {
+                if (streetName.HasSameBaseName(otherStreetName))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Returns only the route-number names. Faithful port of C++ <c>GetRouteNumbers()</c>.</summary>
     public virtual StreetNames GetRouteNumbers()
     {

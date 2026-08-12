@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "release": "3.8.3",
+    "sourceCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+    "image": "ghcr.io/valhalla/valhalla:3.8.3",
+    "imageDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f"
+  },
+  "input": {
+    "feed": "../MonacoBus",
+    "feedFileHashes": {
+      "agency.txt": "3E29248CF68986D79431A56E886E0B15D15425085A466FA8DD1EF099A4DAF726",
+      "calendar_dates.txt": "7B064C1056143E9EDA377ED5F9646A5AFEA277A6624F30D899E579A37BF4EA57",
+      "calendar.txt": "3ADC1848369AD4FF3CF30861E8754986ADC26BFBF71D27AF7ACC0BCC2E5FF000",
+      "frequencies.txt": "4AC4DB99C5A8BE7A4E2A8421EDB6CAB4C5C10B25559177653B29A51EFE0C7095",
+      "routes.txt": "E821F6DBA7130775B9380F42FD2875BE0B947E29D67E45EA3350AAB380386C32",
+      "shapes.txt": "89EF28B13888BFA57B3BEEAA481C96D2AA0338283B90E0FD01CBBC80A82E8C27",
+      "stop_times.txt": "B4FD908A8EF09BA9AC4FD68633456A90585D4167BB0ACB55FE89245A88332C51",
+      "stops.txt": "F2C9E65B5EBD353F87CC5289BE9B6BFCFB1B589265EC63365AB5D3BAE3B1DCFD",
+      "transfers.txt": "C603AA7F338629DBE44E5F134E8E0518A5DE1E48025819981086B94F037ACFFB",
+      "trips.txt": "CAAE8D7A8124B237328BAE0FAF187D0D67304053D3D577A060C086FBED5CA8F5"
+    }
+  },
+  "build": {
+    "network": "none",
+    "cpuLimit": 2,
+    "memoryLimitBytes": 2147483648,
+    "concurrency": 1,
+    "timezoneDatabase": null,
+    "commands": [
+      "valhalla_ingest_transit -c /work/valhalla.json -j 1",
+      "valhalla_convert_transit -c /work/valhalla.json -j 1"
+    ]
+  },
+  "protobuf": {
+    "path": "3/000/769/709.pbf",
+    "length": 884,
+    "sha256": "FAA9502A934B6C0420312A446127E04C4FEC96EFC9E442E4EC3FA256CB0502E4"
+  },
+  "graphTile": {
+    "path": "3/000/769/709.gph",
+    "length": 1560,
+    "sha256": "9807B940BC18D48068C6DE47316BC17A60914FFB7EC647806463A0FE77817254",
+    "tileId": 769709,
+    "level": 3,
+    "nodes": 6,
+    "transitStops": 6,
+    "routes": 1,
+    "departures": 2
+  }
+}

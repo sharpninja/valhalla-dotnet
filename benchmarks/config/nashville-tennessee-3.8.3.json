@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "datasetName": "Nashville/Tennessee Valhalla 3.8.3 qualification",
+  "inputPath": "../../artifacts/tennessee-latest.osm.pbf",
+  "expectedInputSha256": "CB13510475F913209529C19128DA321606A954FE1F92B70C8C33216496BD74A6",
+  "warmupRuns": 1,
+  "measuredRuns": 5,
+  "requiredManagedTimeRatio": 0.8,
+  "maximumManagedMemoryRatio": 1.25,
+  "maximumManagedOutputSizeRatio": 1.05,
+  "maximumManagedHours": 24,
+  "managed": {
+    "id": "managed-valhalla-dotnet-2.0.0",
+    "fileName": "docker",
+    "arguments": [
+      "build-tiles",
+      "--pbf",
+      "/input/tennessee-latest.osm.pbf",
+      "--working-directory",
+      "/work",
+      "--output",
+      "/output/tiles",
+      "--storage-mode",
+      "MemoryMapped",
+      "--memory-budget-bytes",
+      "268435456",
+      "--scratch-budget-bytes",
+      "8589934592",
+      "--max-degree-of-parallelism",
+      "16",
+      "--dataset-id",
+      "0",
+      "--build-id",
+      "0",
+      "--deterministic-output",
+      "true",
+      "--build-date",
+      "2026-08-08"
+    ],
+    "docker": {
+      "image": "{managed-image}",
+      "entryPoint": "valhalla-dotnet",
+      "inputFileName": "tennessee-latest.osm.pbf",
+      "additionalInputFiles": {},
+      "cpuLimit": 16,
+      "memoryLimitBytes": 8589934592,
+      "pidsLimit": 4096,
+      "useNativeVolumes": true
+    }
+  },
+  "official": {
+    "id": "official-valhalla-3.8.3-a60c7cb",
+    "fileName": "docker",
+    "arguments": [
+      "--config",
+      "/input/official-valhalla-3.8.3.json",
+      "--concurrency",
+      "16",
+      "/input/tennessee-latest.osm.pbf"
+    ],
+    "docker": {
+      "image": "{official-image}",
+      "entryPoint": "valhalla_build_tiles",
+      "inputFileName": "tennessee-latest.osm.pbf",
+      "additionalInputFiles": {
+        "official-valhalla-3.8.3.json": "official-valhalla-3.8.3.json"
+      },
+      "cpuLimit": 16,
+      "memoryLimitBytes": 8589934592,
+      "pidsLimit": 4096,
+      "useNativeVolumes": true
+    }
+  }
+}

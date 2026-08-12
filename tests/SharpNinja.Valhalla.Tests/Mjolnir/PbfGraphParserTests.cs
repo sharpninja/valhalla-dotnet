@@ -41,7 +41,7 @@ public class PbfGraphParserTests
     private static OSMNode GetNode(PbfGraphParser parser, ulong nodeId) =>
         parser.WayNodes.First(wn => wn.Node.Osmid == nodeId).Node;
 
-    private static (PbfGraphParser parser, OSMData data) Run(PbfBuilder builder, PbfGraphParserOptions? options = null)
+    internal static (PbfGraphParser parser, OSMData data) Run(PbfBuilder builder, PbfGraphParserOptions? options = null)
     {
         byte[] pbf = builder.Build();
         string path = Path.Combine(Path.GetTempPath(), $"tm_pbf_{System.Guid.NewGuid():N}.osm.pbf");
@@ -55,6 +55,59 @@ public class PbfGraphParserTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void BuildParsedTileSet_ReleasesConsumedParserBuildSequences()
+    {
+        var builder = new PbfBuilder();
+        builder.AddNode(1, 36.1200, -86.6800);
+        builder.AddNode(2, 36.1210, -86.6790);
+        builder.AddNode(3, 36.1220, -86.6780);
+        builder.AddWay(
+            100,
+            new ulong[] { 1, 2, 3 },
+            new()
+            {
+                ["highway"] = "residential",
+                ["access"] = "private",
+            });
+
+        (PbfGraphParser parser, OSMData data) = Run(builder);
+        Assert.NotEmpty(parser.Ways);
+        Assert.NotEmpty(parser.WayNodes);
+        Assert.NotEmpty(parser.Access);
+
+        string tileDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-parser-release-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            TileBuilderResult result = TileBuilder.BuildParsedTileSet(
+                parser,
+                data,
+                tileDirectory,
+                new TileBuilderConfig
+                {
+                    Hierarchy = false,
+                    Shortcuts = false,
+                    MaxDegreeOfParallelism = 1,
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(result.Success);
+            Assert.Empty(parser.Ways);
+            Assert.Empty(parser.WayNodes);
+            Assert.Empty(parser.Access);
+        }
+        finally
+        {
+            if (Directory.Exists(tileDirectory))
+            {
+                Directory.Delete(tileDirectory, recursive: true);
+            }
         }
     }
 
@@ -427,6 +480,29 @@ public class PbfGraphParserTests
         Assert.Equal(400u, data.LaneConnectivityMap[401][0].FromWayId);
     }
 
+    [Fact]
+    public void LoopNodeOccurrence_UsesOneMutableEntryForInsertAndRepeat()
+    {
+        var occurrences = new Dictionary<ulong, int>();
+
+        ref int insertedOccurrence = ref PbfGraphParser.GetOrAddLoopNodeOccurrence(
+            occurrences,
+            nodeId: 42,
+            currentIndex: 3,
+            out bool inserted);
+        Assert.True(inserted);
+        Assert.Equal(3, insertedOccurrence);
+
+        insertedOccurrence = 7;
+        ref int repeatedOccurrence = ref PbfGraphParser.GetOrAddLoopNodeOccurrence(
+            occurrences,
+            nodeId: 42,
+            currentIndex: 11,
+            out bool repeatedInserted);
+        Assert.False(repeatedInserted);
+        Assert.Equal(7, repeatedOccurrence);
+    }
+
     // ---- cul-de-sac inference -------------------------------------------------
 
     [Fact]
@@ -466,13 +542,127 @@ public class PbfGraphParserTests
         Assert.True(data.Initialized);
     }
 
+    // ---- Valhalla 3.8.3 road behavior ----------------------------------------
+
+    [Fact]
+    public void PedestrianArea_DefaultPolicyDropsWay()
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.10, -86.79);
+        b.AddNode(3, 36.11, -86.79);
+        b.AddWay(
+            700,
+            new ulong[] { 1, 2, 3, 1 },
+            new() { ["highway"] = "pedestrian", ["area"] = "yes" });
+
+        (PbfGraphParser parser, _) = Run(b);
+
+        Assert.DoesNotContain(parser.Ways, way => way.WayId() == 700);
+    }
+
+    [Fact]
+    public void PedestrianArea_EnabledRetainsAreaButGraphBuilderSkipsRing()
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.10, -86.79);
+        b.AddNode(3, 36.11, -86.79);
+        b.AddWay(
+            701,
+            new ulong[] { 1, 2, 3, 1 },
+            new() { ["highway"] = "pedestrian", ["area"] = "yes" });
+
+        (PbfGraphParser parser, _) = Run(b, new PbfGraphParserOptions { PedestrianAreas = true });
+
+        OSMWay area = GetWay(parser, 701);
+        Assert.True(area.Area());
+        Assert.Empty(GraphBuilder.BuildEdges(parser.Ways, parser.WayNodes).Edges);
+    }
+
+    [Theory]
+    [InlineData("clay")]
+    [InlineData("laterite")]
+    public void Surface_Valhalla383DirtValues_AreClassifiedAsDirt(string surface)
+    {
+        var b = new PbfBuilder();
+        b.AddNode(1, 36.10, -86.80);
+        b.AddNode(2, 36.11, -86.79);
+        b.AddWay(
+            702,
+            new ulong[] { 1, 2 },
+            new() { ["highway"] = "track", ["surface"] = surface });
+
+        (PbfGraphParser parser, _) = Run(b);
+
+        Assert.Equal(Surface.Dirt, GetWay(parser, 702).SurfaceValue());
+    }
+
     // =========================================================================
     // Minimal .osm.pbf builder (a flexible version of the OsmPbfReaderTests fixture).
     // Emits a single OSMHeader + a single OSMData PrimitiveBlock with one group holding
     // all regular nodes, ways, and relations. Strings are deduped into a string table.
     // =========================================================================
 
-    private sealed class PbfBuilder
+    [Fact]
+    public void WayLanguageAndPronunciationTags_AreRetainedForGraphGeneration()
+    {
+        var builder = new PbfBuilder();
+        builder.AddNode(1, 41.0, 12.0);
+        builder.AddNode(2, 41.001, 12.001);
+        builder.AddWay(
+            700,
+            new ulong[] { 1, 2 },
+            new()
+            {
+                ["highway"] = "residential",
+                ["name"] = "Murfreesboro Road",
+                ["name:es"] = "Camino Murfreesboro",
+                ["name:pronunciation"] = "mur frees burrow",
+                ["name:es:pronunciation:nt-sampa"] = "kah mee noh",
+                ["ref"] = "US 41",
+                ["ref:en:pronunciation"] = "you ess forty one",
+            });
+
+        (PbfGraphParser parser, OSMData data) = Run(builder);
+        OSMWay way = GetWay(parser, 700);
+
+        Assert.Equal("Murfreesboro Road", data.NameOffsetMap.Name(way.NameIndex));
+        Assert.Equal("US 41", data.NameOffsetMap.Name(way.RefIndex));
+        Assert.Equal("es", data.NameOffsetMap.Name(way.NameLangIndex));
+
+        OSMLinguisticName spanishName = Assert.Single(way.LinguisticNames);
+        Assert.Equal(OSMLinguisticType.Name, spanishName.Type);
+        Assert.Equal(Language.Es, spanishName.Language);
+        Assert.Equal("Camino Murfreesboro", spanishName.Text);
+
+        Assert.Collection(
+            way.Pronunciations.OrderBy(value => value.Type).ThenBy(value => value.Alphabet),
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Name, value.Type);
+                Assert.Equal(Language.None, value.Language);
+                Assert.Equal(PronunciationAlphabet.Ipa, value.Alphabet);
+                Assert.Equal("mur frees burrow", value.Text);
+            },
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Name, value.Type);
+                Assert.Equal(Language.Es, value.Language);
+                Assert.Equal(PronunciationAlphabet.NtSampa, value.Alphabet);
+                Assert.Equal("kah mee noh", value.Text);
+            },
+            value =>
+            {
+                Assert.Equal(OSMLinguisticType.Ref, value.Type);
+                Assert.Equal(Language.En, value.Language);
+                Assert.Equal(PronunciationAlphabet.Ipa, value.Alphabet);
+                Assert.Equal("you ess forty one", value.Text);
+            });
+        Assert.True(way.HasPronunciationTags());
+    }
+
+    internal sealed class PbfBuilder
     {
         private readonly List<(ulong id, double lat, double lon, Dictionary<string, string> tags)> _nodes = new();
         private readonly List<(ulong id, ulong[] refs, Dictionary<string, string> tags)> _ways = new();

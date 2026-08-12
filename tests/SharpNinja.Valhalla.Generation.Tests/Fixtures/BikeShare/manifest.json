@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "upstreamVersion": "3.8.3",
+  "upstreamCommit": "a60c7cbfc83e073f50887cd27e0109d02e6b64e5",
+  "containerDigest": "sha256:70b45295d81035e3562e1bbf996a28d5fc55e1ccc5d7e3fff9f297d3b1a1359f",
+  "source": {
+    "path": "ParisBss/paris_bss.osm.pbf",
+    "length": 90146,
+    "sha256": "74792AA963E038176E0397E12A22686E0B62A3248086ED340C12A365520B7F7D"
+  },
+  "oracleStage": "bss",
+  "baseTiles": [
+    { "path": "2/000/799/929.gph", "length": 287200, "sha256": "53F734495E15546BEBDDCF4680ACDEA5D30BD9FB967024D1F86FBCCA10D305E5" }
+  ],
+  "bikeShareTiles": [
+    { "path": "2/000/799/929.gph", "length": 322688, "sha256": "0810BDEF561F9194B7923C20AB2BEA1A405F4A71DF47B21BE33297EE517BFFA1" }
+  ],
+  "semanticCounts": {
+    "sourceStations": 46,
+    "addedBikeShareNodes": 46,
+    "addedBikeShareConnectionEdges": 368
+  }
+}

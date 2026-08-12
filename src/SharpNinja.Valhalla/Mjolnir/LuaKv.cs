@@ -96,6 +96,17 @@ internal sealed class LuaKv
 {
     private readonly Dictionary<string, string> _map;
 
+    /// <summary>
+    /// Uses a caller-owned mutable dictionary as the Lua table backing store. The tag transforms
+    /// already mutate their input in place; retaining that storage avoids copying the complete tag
+    /// table into and back out of the Lua compatibility layer.
+    /// </summary>
+    public LuaKv(Dictionary<string, string> initial)
+    {
+        ArgumentNullException.ThrowIfNull(initial);
+        _map = initial;
+    }
+
     public LuaKv(IEnumerable<KeyValuePair<string, string>> initial)
     {
         _map = new Dictionary<string, string>();

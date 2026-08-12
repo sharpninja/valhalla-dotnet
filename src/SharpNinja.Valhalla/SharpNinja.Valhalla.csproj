@@ -9,7 +9,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageId>SharpNinja.Valhalla</PackageId>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Authors>SharpNinja</Authors>
     <Description>Embedded, in-process C# port of the Valhalla OSM routing engine with provider-neutral routing, traffic and closure feed normalization, route-modifier analysis, and Valhalla traffic edge/tile integration.</Description>
     <PackageTags>valhalla;osm;routing;navigation;maps;offline</PackageTags>
@@ -41,5 +41,6 @@
        suite in this repo. -->
   <ItemGroup>
     <InternalsVisibleTo Include="SharpNinja.Valhalla.Tests" />
+    <InternalsVisibleTo Include="SharpNinja.Valhalla.Generation" />
   </ItemGroup>
 </Project>

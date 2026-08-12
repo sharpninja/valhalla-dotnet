@@ -1,0 +1,12 @@
+.git
+.mcpServer
+.nuke
+artifacts
+cache
+**/bin
+**/obj
+**/TestResults
+azure-pipelines.yml
+docs
+tests
+benchmarks

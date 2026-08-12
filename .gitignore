@@ -32,3 +32,14 @@ artifacts/test-results/
 artifacts/*.osm.pbf
 artifacts/*.md
 artifacts/*.json
+
+# Managed generation build artifacts and reproducibility scratch
+artifacts/generation/
+artifacts/repro-second/
+
+artifacts/qualification/**/tn-run-*/
+artifacts/qualification/**/run-*/
+artifacts/tennessee-latest.osm.pbf
+
+artifacts/nashville-metro.osm.pbf
+artifacts/tennessee-latest.osm.pbf

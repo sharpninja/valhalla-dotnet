@@ -23,12 +23,16 @@ public static class NodeTagTransform
     /// </summary>
     public static int Transform(IDictionary<string, string> tags)
     {
-        var kv = new LuaKv(tags);
+        Dictionary<string, string>? mutableTags = tags as Dictionary<string, string>;
+        var kv = mutableTags is null ? new LuaKv(tags) : new LuaKv(mutableTags);
         NodesProc(kv);
-        tags.Clear();
-        foreach (KeyValuePair<string, string> p in kv.Raw)
+        if (mutableTags is null)
         {
-            tags[p.Key] = p.Value;
+            tags.Clear();
+            foreach (KeyValuePair<string, string> p in kv.Raw)
+            {
+                tags[p.Key] = p.Value;
+            }
         }
 
         return 0;

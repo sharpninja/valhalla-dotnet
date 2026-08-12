@@ -1,0 +1,12 @@
+{
+  "logging": {
+    "type": "std_out",
+    "color": false
+  },
+  "mjolnir": {
+    "tile_dir": "/output/tiles",
+    "max_cache_size": 1073741824,
+    "hierarchy": true,
+    "shortcuts": true
+  }
+}

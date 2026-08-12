@@ -1,5 +1,5 @@
 // Faithful C# port of Valhalla mjolnir ComplexRestrictionBuilder
-// (complexrestrictionbuilder.h + src/mjolnir/complexrestrictionbuilder.cc) @ 3.7.0.
+// (complexrestrictionbuilder.h + src/mjolnir/complexrestrictionbuilder.cc) @ 3.8.3 commit a60c7cb.
 // Sources:
 //   F:/github/valhalla/valhalla/mjolnir/complexrestrictionbuilder.h
 //   F:/github/valhalla/src/mjolnir/complexrestrictionbuilder.cc
@@ -13,9 +13,10 @@
 // ComplexRestrictionView reader parses.
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
+
 
 using SharpNinja.Valhalla.Baldr;
 
@@ -154,22 +155,125 @@ public sealed class ComplexRestrictionBuilder
     /// </summary>
     public void Serialize(Stream output)
     {
-        uint viaCount = (uint)_viaList.Count;
-        if (viaCount > ComplexRestriction.MaxViasPerRestriction)
+        ArgumentNullException.ThrowIfNull(output);
+        Span<byte> buffer = stackalloc byte[
+            ComplexRestriction.SizeOfStruct +
+            (ComplexRestriction.MaxViasPerRestriction *
+             ComplexRestriction.SizeOfGraphId)];
+        int written = Serialize(buffer);
+        output.Write(buffer[..written]);
+    }
+
+    internal int Serialize(Span<byte> destination)
+    {
+        int required = SizeOf();
+        if (destination.Length < required)
         {
-            viaCount = ComplexRestriction.MaxViasPerRestriction;
+            throw new ArgumentException(
+                $"Restriction serialization requires {required} bytes.",
+                nameof(destination));
         }
 
-        (ulong word0, ulong word1, ulong word2) = _restriction.RawWords();
-        WriteUInt64(output, word0);
-        WriteUInt64(output, word1);
-        WriteUInt64(output, word2);
+        uint viaCount = (uint)Math.Min(
+            _viaList.Count,
+            ComplexRestriction.MaxViasPerRestriction);
+        (ulong word0, ulong word1, ulong word2) =
+            _restriction.RawWords();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            destination,
+            word0);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            destination[sizeof(ulong)..],
+            word1);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            destination[(sizeof(ulong) * 2)..],
+            word2);
 
+        int offset = ComplexRestriction.SizeOfStruct;
         for (uint i = 0; i < viaCount; i++)
         {
-            WriteUInt64(output, _viaList[(int)i].Value);
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                destination[offset..],
+                _viaList[(int)i].Value);
+            offset += ComplexRestriction.SizeOfGraphId;
         }
+
+        return offset;
     }
+
+    internal static int Serialize(
+        Span<byte> destination,
+        GraphId from,
+        GraphId to,
+        ReadOnlySpan<GraphId> vias,
+        RestrictionType type,
+        ushort modes,
+        byte probability,
+        ulong timeDomain)
+    {
+        if (vias.Length > ComplexRestriction.MaxViasPerRestriction)
+        {
+            throw new ArgumentOutOfRangeException(nameof(vias));
+        }
+
+        int required = checked(
+            ComplexRestriction.SizeOfStruct +
+            (vias.Length * ComplexRestriction.SizeOfGraphId));
+        if (destination.Length < required)
+        {
+            throw new ArgumentException(
+                $"Restriction serialization requires {required} bytes.",
+                nameof(destination));
+        }
+
+        ComplexRestriction restriction = ComplexRestriction.Create();
+        restriction.SetFromGraphId(from);
+        restriction.SetToGraphId(to);
+        restriction.SetViaCount(checked((byte)vias.Length));
+        restriction.SetType(type);
+        restriction.SetModes(modes);
+        restriction.SetProbability(probability);
+
+        var domain = new TimeDomain(timeDomain);
+        if (domain.TdValue != 0)
+        {
+            restriction.SetBeginDayDow(domain.BeginDayDow);
+            restriction.SetBeginHrs(domain.BeginHrs);
+            restriction.SetBeginMins(domain.BeginMins);
+            restriction.SetBeginMonth(domain.BeginMonth);
+            restriction.SetBeginWeek(domain.BeginWeek);
+            restriction.SetDow(domain.Dow);
+            restriction.SetHasDt(true);
+            restriction.SetDtType(domain.Type != 0);
+            restriction.SetEndDayDow(domain.EndDayDow);
+            restriction.SetEndHrs(domain.EndHrs);
+            restriction.SetEndMins(domain.EndMins);
+            restriction.SetEndMonth(domain.EndMonth);
+            restriction.SetEndWeek(domain.EndWeek);
+        }
+
+        (ulong word0, ulong word1, ulong word2) =
+            restriction.RawWords();
+        BinaryPrimitives.WriteUInt64LittleEndian(destination, word0);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            destination[sizeof(ulong)..],
+            word1);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            destination[(sizeof(ulong) * 2)..],
+            word2);
+
+        int offset = ComplexRestriction.SizeOfStruct;
+        foreach (GraphId via in vias)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                destination[offset..],
+                via.Value);
+            offset += ComplexRestriction.SizeOfGraphId;
+        }
+
+        return offset;
+    }
+
 
     /// <summary>
     /// Overloaded equality - used to ensure no dups in tiles. Faithful port of the C++
@@ -219,10 +323,4 @@ public sealed class ComplexRestrictionBuilder
         return true;
     }
 
-    private static void WriteUInt64(Stream output, ulong value)
-    {
-        Span<byte> buf = stackalloc byte[sizeof(ulong)];
-        MemoryMarshal.Write(buf, in value);
-        output.Write(buf);
-    }
 }

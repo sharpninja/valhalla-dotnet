@@ -29,8 +29,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 using SharpNinja.Valhalla.Baldr;
 
@@ -49,6 +51,7 @@ public sealed class PbfGraphParser
     private const byte UnlimitedSpeedLimit = byte.MaxValue;
     private const float MaxAssumedSpeed = 140.0f;
 
+
     // kMaxMtbScale / kMaxMtbUphillScale from graphconstants.h.
     private const int MaxMtbScale = 6;
     private const int MaxMtbUphillScale = 5;
@@ -62,21 +65,24 @@ public sealed class PbfGraphParser
     private readonly bool _includePlatforms;
     private readonly bool _includeDriveways;
     private readonly bool _includeConstruction;
+    private readonly bool _pedestrianAreas;
     private readonly bool _inferInternalIntersections;
     private readonly bool _inferTurnChannels;
     private readonly bool _useDirectionOnWays;
     private readonly bool _allowAltName;
     private readonly bool _useUrbanTag;
     private readonly bool _useRestArea;
+    private readonly IReadOnlyDictionary<string, string> _emptyNodeTags;
 
     private readonly OSMData _osmdata = new();
-    private readonly List<OSMWay> _ways = new();
-    private readonly List<OSMWayNode> _wayNodes = new();
-    private readonly List<OSMAccess> _access = new();
+    private List<OSMWay> _ways = new();
+    private List<OSMWayNode> _wayNodes = new();
+    private List<OSMAccess> _access = new();
     private readonly List<OSMRestriction> _complexRestrictionsFrom = new();
     private readonly List<OSMRestriction> _complexRestrictionsTo = new();
 
     private readonly CuldesacProcessor _culdesac = new();
+    private readonly Dictionary<ulong, int> _loopNodesScratch = new();
 
     // Per-way scratch (the C++ graph_parser members reset in way()).
     private OSMWay _way = new();
@@ -107,6 +113,8 @@ public sealed class PbfGraphParser
     private string _wayName = string.Empty;
     private string _wayRef = string.Empty;
 
+    private readonly Dictionary<string, TimeSpan> _lastParseStageDurations =
+        new(StringComparer.Ordinal);
     private ulong _lastNode;
     private ulong _lastWay;
     private ulong _lastRelation;
@@ -124,13 +132,20 @@ public sealed class PbfGraphParser
         _includePlatforms = options.IncludePlatforms;
         _includeDriveways = options.IncludeDriveways;
         _includeConstruction = options.IncludeConstruction;
+        _pedestrianAreas = options.PedestrianAreas;
         _inferInternalIntersections = options.InferInternalIntersections;
         _inferTurnChannels = options.InferTurnChannels;
         _useDirectionOnWays = options.UseDirectionOnWays;
         _allowAltName = options.AllowAltName;
         _useUrbanTag = options.UseUrbanTag;
         _useRestArea = options.UseRestArea;
+
+        _emptyNodeTags = OsmNodeSemanticTransformer.CreateEmptyTransformedTags();
     }
+
+    /// <summary>Elapsed time for each semantic PBF pass in the most recent parse.</summary>
+    public IReadOnlyDictionary<string, TimeSpan> LastParseStageDurations =>
+        _lastParseStageDurations;
 
     /// <summary>The ways collected during the ways pass (C++ <c>ways</c> sequence), in input order.</summary>
     public IReadOnlyList<OSMWay> Ways => _ways;
@@ -151,16 +166,54 @@ public sealed class PbfGraphParser
     public IReadOnlyList<OSMRestriction> ComplexRestrictionsTo => _complexRestrictionsTo;
 
     /// <summary>
+    /// Releases the large, one-shot sequences consumed by graph construction while retaining the
+    /// complex restrictions required by the later restriction stage. Replacing the lists, rather
+    /// than clearing them, releases their backing arrays for collection.
+    /// </summary>
+    internal void ReleaseBuildSequences()
+    {
+        _ways = new List<OSMWay>();
+        _wayNodes = new List<OSMWayNode>();
+        _access = new List<OSMAccess>();
+        _culdesac.ReleaseScratch();
+    }
+
+    /// <summary>
     /// Runs the full three-pass parse over the given PBF file paths and returns the populated
     /// <see cref="OSMData"/>. Faithful to ParseWays -&gt; ParseNodes -&gt; ParseRelations.
     /// </summary>
     public OSMData Parse(IReadOnlyList<string> pbfPaths)
     {
         ArgumentNullException.ThrowIfNull(pbfPaths);
+        return Parse(new FileOsmPbfEntitySource(pbfPaths), CancellationToken.None);
+    }
 
-        ParseWays(pbfPaths);
-        ParseNodes(pbfPaths);
-        ParseRelations(pbfPaths);
+    /// <summary>
+    /// Runs the canonical semantic passes over a replayable entity source. This overload lets
+    /// build-time tooling decode each physical PBF block once and replay normalized entities from
+    /// bounded intermediate storage.
+    /// </summary>
+    public OSMData Parse(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        _lastParseStageDurations.Clear();
+        var stageStopwatch = Stopwatch.StartNew();
+        ParseWays(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["ways"] = stageStopwatch.Elapsed;
+
+        stageStopwatch.Restart();
+        ParseNodes(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["nodes"] = stageStopwatch.Elapsed;
+
+        stageStopwatch.Restart();
+        ParseRelations(source, cancellationToken);
+        stageStopwatch.Stop();
+        _lastParseStageDurations["relations"] = stageStopwatch.Elapsed;
 
         _osmdata.Initialized = true;
         return _osmdata;
@@ -168,14 +221,22 @@ public sealed class PbfGraphParser
 
     // ===== Pass 1: ways ========================================================
 
-    private void ParseWays(IReadOnlyList<string> pbfPaths)
+    private void ParseWays(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new WayVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Ways,
+                new WayVisitor(this),
+                cancellationToken);
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Clarifies types of loop roads and saves fixed ways.
         _culdesac.ClarifyAndFix(_wayNodes, _ways);
@@ -184,7 +245,7 @@ public sealed class PbfGraphParser
         _access.Sort((a, b) => a.WayId().CompareTo(b.WayId()));
     }
 
-    private sealed class WayVisitor : IOsmPbfVisitor
+    private sealed class WayVisitor : IOsmPbfSpanVisitor
     {
         private readonly PbfGraphParser _p;
 
@@ -198,7 +259,30 @@ public sealed class PbfGraphParser
         {
         }
 
-        public void Way(ulong id, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> tags) =>
+        public void Way(
+            ulong id,
+            IReadOnlyList<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags)
+        {
+            if (nodeRefs is ulong[] array)
+            {
+                _p.TransformAndAddWay(id, array, tags);
+                return;
+            }
+
+            if (nodeRefs is List<ulong> list)
+            {
+                _p.TransformAndAddWay(id, CollectionsMarshal.AsSpan(list), tags);
+                return;
+            }
+
+            _p.TransformAndAddWay(id, nodeRefs.ToArray(), tags);
+        }
+
+        public void Way(
+            ulong id,
+            ReadOnlySpan<ulong> nodeRefs,
+            IReadOnlyDictionary<string, string> tags) =>
             _p.TransformAndAddWay(id, nodeRefs, tags);
 
         public void Relation(ulong id, IReadOnlyList<OsmRelationMember> members, IReadOnlyDictionary<string, string> tags)
@@ -208,30 +292,15 @@ public sealed class PbfGraphParser
 
     // transform_way + way() fused. transform_way filters degenerate/closed-area ways and applies
     // the Lua way transform; way() then drives the tag handlers.
-    private void TransformAndAddWay(ulong wayId, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> rawTags)
+    private void TransformAndAddWay(
+        ulong wayId,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> rawTags)
     {
-        // Do not add ways with < 2 nodes.
-        if (nodeRefs.Count < 2)
-        {
-            return;
-        }
-
-        // Throw away closed features with building/landuse/leisure/natural tags.
-        if (nodeRefs[0] == nodeRefs[^1])
-        {
-            foreach (KeyValuePair<string, string> tag in rawTags)
-            {
-                if (tag.Key is "building" or "landuse" or "leisure" or "natural")
-                {
-                    return;
-                }
-            }
-        }
-
-        // Apply the Lua way tag transform. Empty tags -> the empty transform -> dropped.
-        var tags = new Dictionary<string, string>(rawTags);
-        int filter = WayTagTransform.Transform(tags);
-        if (filter != 0 || tags.Count == 0)
+        if (!OsmWaySemanticTransformer.TryTransform(
+                nodeRefs,
+                rawTags,
+                out IReadOnlyDictionary<string, string>? tags))
         {
             return;
         }
@@ -239,7 +308,29 @@ public sealed class PbfGraphParser
         Way(wayId, nodeRefs, tags);
     }
 
-    private void Way(ulong wayId, IReadOnlyList<ulong> nodeRefs, IReadOnlyDictionary<string, string> tags)
+    internal static ref int GetOrAddLoopNodeOccurrence(
+        Dictionary<ulong, int> occurrences,
+        ulong nodeId,
+        int currentIndex,
+        out bool inserted)
+    {
+        ref int occurrence = ref CollectionsMarshal.GetValueRefOrAddDefault(
+            occurrences,
+            nodeId,
+            out bool exists);
+        inserted = !exists;
+        if (inserted)
+        {
+            occurrence = currentIndex;
+        }
+
+        return ref occurrence;
+    }
+
+    private void Way(
+        ulong wayId,
+        ReadOnlySpan<ulong> nodeRefs,
+        IReadOnlyDictionary<string, string> tags)
     {
         _osmid = wayId;
         if (_osmid < _lastWay)
@@ -251,6 +342,14 @@ public sealed class PbfGraphParser
 
         try
         {
+            // The 3.8.3 Lua transform retains pedestrian-area rings so the optional area builder
+            // can consume them. The default road-graph parser still excludes them.
+            if (!_pedestrianAreas && tags.TryGetValue("pedestrian_area", out string? pedestrianArea) &&
+                pedestrianArea == "true")
+            {
+                return;
+            }
+
             // Throw away use if include_driveways_ is false and it is a private driveway.
             if (!_includeDriveways && tags.TryGetValue("use", out string? useDw) &&
                 (Use)ToInt(useDw) == Use.Driveway)
@@ -277,27 +376,28 @@ public sealed class PbfGraphParser
         {
         }
 
-        // Add the refs to the reference list and mark loop / flat-loop / intersection.
-        var loopNodes = new Dictionary<ulong, int>();
+        // Add the refs to the reference list and mark loop / flat-loop / intersection. Reuse the
+        // parser-owned table because way callbacks are synchronous and the entries never escape.
+        Dictionary<ulong, int> loopNodes = _loopNodesScratch;
+        loopNodes.Clear();
         int wayNodeIndex = _wayNodes.Count;
-        for (int i = 0; i < nodeRefs.Count; ++i)
+        for (int i = 0; i < nodeRefs.Length; ++i)
         {
             ulong node = nodeRefs[i];
             var osmNode = new OSMNode(node);
 
-            bool inserted = !loopNodes.ContainsKey(node);
-            if (inserted)
-            {
-                loopNodes[node] = i;
-            }
-
-            int firstOccurrence = loopNodes[node];
-            bool flattening = firstOccurrence > 0 && i < nodeRefs.Count - 1 &&
+            ref int occurrence = ref GetOrAddLoopNodeOccurrence(
+                loopNodes,
+                node,
+                i,
+                out bool inserted);
+            int firstOccurrence = occurrence;
+            bool flattening = firstOccurrence > 0 && i < nodeRefs.Length - 1 &&
                               nodeRefs[i + 1] == nodeRefs[firstOccurrence - 1];
-            bool unflattening = i > 0 && firstOccurrence < nodeRefs.Count - 1 &&
+            bool unflattening = i > 0 && firstOccurrence < nodeRefs.Length - 1 &&
                                 nodeRefs[i - 1] == nodeRefs[firstOccurrence + 1];
             osmNode.SetFlatLoop(flattening || unflattening);
-            osmNode.SetIntersection(i == 0 || i == nodeRefs.Count - 1);
+            osmNode.SetIntersection(i == 0 || i == nodeRefs.Length - 1);
 
             _wayNodes.Add(new OSMWayNode
             {
@@ -313,12 +413,12 @@ public sealed class PbfGraphParser
                 OSMWayNode mid = _wayNodes[midIndex];
                 mid.Node.SetIntersection(true);
                 _wayNodes[midIndex] = mid;
-                loopNodes[node] = i;
+                occurrence = i;
             }
         }
 
         _osmdata.OsmWayCount++;
-        _osmdata.OsmWayNodeCount += (ulong)nodeRefs.Count;
+        _osmdata.OsmWayNodeCount += (ulong)nodeRefs.Length;
 
         // Reset per-way scratch.
         _defaultSpeed = 0; _maxSpeed = 0; _averageSpeed = 0; _advisorySpeed = 0;
@@ -330,7 +430,7 @@ public sealed class PbfGraphParser
         _wayRef = string.Empty;
 
         _way = new OSMWay(_osmid);
-        _way.SetNodeCount((uint)nodeRefs.Count);
+        _way.SetNodeCount((uint)nodeRefs.Length);
         _osmAccess = new OSMAccess(_osmid);
         _hasUserTags = false;
 
@@ -441,7 +541,7 @@ public sealed class PbfGraphParser
         }
 
         // Infer cul-de-sac if a road edge is a loop and is low classification.
-        if (!_way.Roundabout() && loopNodes.Count != nodeRefs.Count && _way.UseValue() == Use.Road &&
+        if (!_way.Roundabout() && loopNodes.Count != nodeRefs.Length && _way.UseValue() == Use.Road &&
             (byte)_way.RoadClassValue() > (byte)RoadClass.Tertiary)
         {
             _culdesac.AddCandidate(_way.WayId(), _ways.Count, nodeRefs);
@@ -453,30 +553,32 @@ public sealed class PbfGraphParser
             _access.Add(_osmAccess);
         }
 
-        // PORT-NOTE: store the structural name/ref indices on the way (C++ way_.set_name_index /
-        // set_ref_index at the end of way(); pbfgraphparser.cc ~L3165). Without this every built edge is
-        // "unnamed" because GraphBuilder.GetNames reads w.NameIndex / w.RefIndex. The deferred
-        // linguistic language-record indices stay at their defaults. Empty strings map to index 0 (the
-        // canonical empty entry), so unset name/ref leave the indices at 0 exactly as before.
-        _way.NameIndex = _osmdata.NameOffsetMap.Index(_wayName);
-        _way.RefIndex = _osmdata.NameOffsetMap.Index(_wayRef);
+        // Populate structural names plus Valhalla 3.8 language and pronunciation records after all
+        // transformed tags have been processed. Empty structural values retain index zero.
+        OSMWayLinguisticTagParser.Apply(_way, tags, _osmdata.NameOffsetMap);
 
         _ways.Add(_way);
     }
 
     // ===== Pass 2: nodes =======================================================
 
-    private void ParseNodes(IReadOnlyList<string> pbfPaths)
+    private void ParseNodes(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
         // Sort way_nodes by node id so we can sequentially update them.
         _wayNodes.Sort((a, b) => a.Node.Osmid.CompareTo(b.Node.Osmid));
 
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _currentWayNodeIndex = 0;
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new NodeVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Nodes,
+                new NodeVisitor(this),
+                cancellationToken);
         }
 
         // Some extracts have no changeset ids; fall back to max osm id.
@@ -484,6 +586,8 @@ public sealed class PbfGraphParser
         {
             _osmdata.MaxChangesetId = _lastNode;
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Re-sort by way index then shape index (for edge building downstream).
         _wayNodes.Sort((a, b) =>
@@ -556,8 +660,8 @@ public sealed class PbfGraphParser
         // C# code skipped the transform for untagged nodes, leaving access_mask absent so the node's
         // access stayed 0; that made every plain intersection node un-routable (Allowed(NodeInfo)
         // failed), trapping the bidirectional A* search.
-        var tags = new Dictionary<string, string>(rawTags);
-        NodeTagTransform.Transform(tags);
+        IReadOnlyDictionary<string, string> tags =
+            OsmNodeSemanticTransformer.Transform(rawTags, _emptyNodeTags);
 
         bool isHighwayJunction = tags.TryGetValue("highway", out string? hw) && hw == "motorway_junction";
         bool maybeNamedJunction = tags.TryGetValue("junction", out string? jn) && (jn == "named" || jn == "yes");
@@ -752,16 +856,23 @@ public sealed class PbfGraphParser
 
     // ===== Pass 3: relations ===================================================
 
-    private void ParseRelations(IReadOnlyList<string> pbfPaths)
+    private void ParseRelations(
+        IOsmPbfEntitySource source,
+        CancellationToken cancellationToken)
     {
-        foreach (string path in pbfPaths)
+        for (var fileOrdinal = 0; fileOrdinal < source.FileCount; fileOrdinal++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _currentWayNodeIndex = 0;
             _lastNode = _lastWay = _lastRelation = 0;
-            var visitor = new RelationVisitor(this);
-            new OsmPbfReader(visitor).Parse(path);
+            source.VisitFile(
+                fileOrdinal,
+                OsmPbfEntityPass.Relations,
+                new RelationVisitor(this),
+                cancellationToken);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         _complexRestrictionsFrom.Sort((a, b) => a.CompareTo(b));
         _complexRestrictionsTo.Sort((a, b) => a.CompareTo(b));
     }
@@ -788,6 +899,13 @@ public sealed class PbfGraphParser
             _p.Relation(id, members, tags);
     }
 
+    private static bool TryNormalizeRestrictionRelationTags(
+        IReadOnlyDictionary<string, string> rawTags,
+        out IReadOnlyDictionary<string, string> normalizedTags) =>
+        OsmRelationSemanticTransformer.TryNormalizeRestrictionTags(
+            rawTags,
+            out normalizedTags);
+
     private void Relation(ulong osmid, IReadOnlyList<OsmRelationMember> members, IReadOnlyDictionary<string, string> rawTags)
     {
         if (osmid < _lastRelation)
@@ -797,9 +915,11 @@ public sealed class PbfGraphParser
 
         _lastRelation = osmid;
 
-        // Relations are not Lua-transformed in graph.lua (relations_proc returns tags as-is) -
-        // the empty-tags case is dropped.
-        if (rawTags.Count == 0)
+        // The official parser receives graph.lua rels_proc output, including normalized numeric
+        // restriction types and separated conditional/probable qualifiers. Reproduce that transform
+        // before applying the C++ graph_parser::relation semantics to raw OSM relation tags.
+        if (rawTags.Count == 0 ||
+            !TryNormalizeRestrictionRelationTags(rawTags, out IReadOnlyDictionary<string, string> tags))
         {
             return;
         }
@@ -819,7 +939,7 @@ public sealed class PbfGraphParser
         string hourStart = string.Empty, hourEnd = string.Empty, dayStart = string.Empty, dayEnd = string.Empty;
         uint modes = 0;
 
-        foreach (KeyValuePair<string, string> tag in rawTags)
+        foreach (KeyValuePair<string, string> tag in tags)
         {
             string key = tag.Key;
             string value = tag.Value;
@@ -1481,6 +1601,9 @@ public sealed class PbfGraphParser
                 }
 
                 return true;
+            case "pedestrian_area":
+                _way.SetArea(value == "true");
+                return true;
             case "use":
                 SetUse(value);
                 return true;
@@ -2039,7 +2162,8 @@ public sealed class PbfGraphParser
             _way.SetSurface(Surface.Compacted);
         }
         else if (v.Contains("dirt") || v.Contains("natural") || v.Contains("earth") ||
-                 v.Contains("ground") || v.Contains("mud"))
+                 v.Contains("ground") || v.Contains("mud") || v.Contains("clay") ||
+                 v.Contains("laterite"))
         {
             _way.SetSurface(Surface.Dirt);
         }
@@ -2386,7 +2510,7 @@ public sealed class PbfGraphParser
     private static int ToInt(string value)
     {
         // Faithful to C++ atoi / Lua tonumber: unparseable OSM tag values (e.g. a Unicode minus
-        // U+2212 "−3", or values with trailing units) yield the default rather than throwing.
+        // U+2212 "???3", or values with trailing units) yield the default rather than throwing.
         return Midgard.Util.TryToInt(value, out int n) ? n : 0;
     }
 
@@ -2437,43 +2561,23 @@ public sealed class PbfGraphParser
     // GetTagTokens(value): default delimiter is ';'.
     private static string[] GetTagTokens(string value) => value.Split(';');
 
-    // get_time_range: a faithful-enough placeholder for the time-domain encoding. The full
-    // timeparsing.cc port (OSM opening-hours grammar -> TimeDomain words) is part of the tile
-    // build slice; here we emit a single non-zero TimeDomain word so conditional restrictions /
-    // speeds are recorded with a stable, ordered value. A real time-domain parse would replace
-    // this without changing the surrounding restriction/speed plumbing.
-    private static IReadOnlyList<ulong> GetTimeRange(string condition)
-    {
-        if (string.IsNullOrWhiteSpace(condition))
-        {
-            return Array.Empty<ulong>();
-        }
-
-        // Use a deterministic non-zero word derived from the condition string so distinct
-        // conditions are distinguishable and ordering in the sequence is stable.
-        ulong word = 1;
-        foreach (char c in condition.Trim())
-        {
-            word = unchecked((word * 31) + c);
-        }
-
-        if (word == 0)
-        {
-            word = 1;
-        }
-
-        return new[] { word };
-    }
+    // Faithful managed port of Valhalla 3.8.3 mjolnir/timeparsing.cc.
+    // Unsupported or malformed values return no domains so callers fail closed.
+    private static IReadOnlyList<ulong> GetTimeRange(string condition) =>
+        OsmConditionalTimeDomainParser.Parse(condition);
 
     // ===== Culdesac processor ==================================================
 
     // Faithful port of the anonymous-namespace culdesac_processor in pbfgraphparser.cc.
     private sealed class CuldesacProcessor
     {
-        private readonly Dictionary<ulong, List<ulong>> _nodeToLoopWay = new();
-        private readonly Dictionary<ulong, LoopMeta> _loopsMeta = new();
+        private Dictionary<ulong, List<ulong>> _nodeToLoopWay = new();
+        private Dictionary<ulong, LoopMeta> _loopsMeta = new();
 
-        public void AddCandidate(ulong osmWayId, int osmWayIndex, IReadOnlyList<ulong> osmNodeIds)
+        public void AddCandidate(
+            ulong osmWayId,
+            int osmWayIndex,
+            ReadOnlySpan<ulong> osmNodeIds)
         {
             _loopsMeta[osmWayId] = new LoopMeta(osmWayIndex);
             foreach (ulong nodeId in osmNodeIds)
@@ -2534,6 +2638,12 @@ public sealed class PbfGraphParser
             }
         }
 
+        public void ReleaseScratch()
+        {
+            _nodeToLoopWay = new Dictionary<ulong, List<ulong>>();
+            _loopsMeta = new Dictionary<ulong, LoopMeta>();
+        }
+
         private sealed class LoopMeta
         {
             private readonly HashSet<ulong> _intersections = new();
@@ -2563,6 +2673,9 @@ public sealed class PbfGraphParserOptions
 
     /// <summary>Include roads under construction (C++ <c>include_construction</c>, default false).</summary>
     public bool IncludeConstruction { get; set; }
+
+    /// <summary>Generate routable pedestrian-area data (C++ <c>pedestrian_areas</c>, default false).</summary>
+    public bool PedestrianAreas { get; set; }
 
     /// <summary>Infer internal intersections later (C++ <c>infer_internal_intersections</c>, default true).</summary>
     public bool InferInternalIntersections { get; set; } = true;

@@ -28,14 +28,7 @@ using ThorEdgeSet = SharpNinja.Valhalla.Thor.EdgeSet;
 
 namespace SharpNinja.Valhalla.Sif;
 
-/// <summary>
-/// Transit departure record placeholder. The full <c>valhalla::baldr::TransitDeparture</c> belongs
-/// to a later (transit) port slice; only the type is referenced by the schedule-based EdgeCost
-/// signature here. PORT-NOTE: stub kept minimal so the foundation costing signatures compile.
-/// </summary>
-public sealed class TransitDeparture
-{
-}
+
 
 /// <summary>
 /// Limited graph reader placeholder. The full <c>valhalla::baldr::GraphReader::LimitedGraphReader</c>
@@ -46,15 +39,6 @@ public sealed class LimitedGraphReader
 {
 }
 
-/// <summary>
-/// Placeholder for the baldr DateTime conditional-restriction helper and timezone database, which
-/// belong to a later port slice. PORT-NOTE: <see cref="DynamicCost.IsConditionalActive"/> calls
-/// into this; until the real DateTime/tz machinery is ported these throw to make the unfinished
-/// dependency explicit rather than silently returning a wrong answer.
-/// </summary>
-internal static class DateTimePlaceholder
-{
-}
 
 /// <summary>cost_edge_t: a [start,end] fraction along an edge plus a cost factor.</summary>
 public struct CostEdge
@@ -525,22 +509,17 @@ public abstract class DynamicCost
     /// of <c>IsConditionalActive</c>.
     /// </summary>
     /// <remarks>
-    /// PORT-NOTE: The C++ implementation delegates to <c>baldr::DateTime::is_conditional_active</c>
-    /// using the timezone database (<c>DateTime::get_tz_db().from_index(tz_index)</c>). The baldr
-    /// DateTime conditional-restriction helper and the timezone database are part of a later port
-    /// slice. The <see cref="TimeDomain"/> field unpacking below is preserved verbatim; the final
-    /// delegation throws until that dependency is ported so a missing-dependency bug cannot hide as
-    /// a silently-wrong restriction result.
+    /// Converts the UTC epoch instant through the stable Valhalla timezone index and evaluates the
+    /// packed <see cref="TimeDomain"/> against local calendar and wall-clock fields.
     /// </remarks>
-    public static bool IsConditionalActive(ulong restriction, ulong currentTime, uint tzIndex)
-    {
-        var td = new TimeDomain(restriction);
-        _ = (td.Type, td.BeginHrs, td.BeginMins, td.EndHrs, td.EndMins, td.Dow,
-             td.BeginWeek, td.BeginMonth, td.BeginDayDow, td.EndWeek, td.EndMonth, td.EndDayDow,
-             currentTime, tzIndex);
-        throw new NotImplementedException(
-            "baldr::DateTime::is_conditional_active + timezone database not yet ported (later slice).");
-    }
+    public static bool IsConditionalActive(
+        ulong restriction,
+        ulong currentTime,
+        uint tzIndex) =>
+        ConditionalTimeDomainEvaluator.IsActive(
+            restriction,
+            currentTime,
+            tzIndex);
 
     // PORT-NOTE: EvaluateRestrictions / GetExemptedAccessRestrictions live on DynamicCost in C++ but
     // were not part of the already-shipped foundation slice. To avoid colliding with the parallel
@@ -555,11 +534,8 @@ public abstract class DynamicCost
     /// the mode and the predecessor list for the current path.
     /// </summary>
     /// <remarks>
-    /// PORT-NOTE: the time-dependent branch (<paramref name="currentTime"/> != 0 and the restriction
-    /// carries date-time info) delegates to <see cref="IsConditionalActive"/>, which depends on the
-    /// baldr DateTime timezone database (a later port slice) and therefore throws. The non-time-
-    /// dependent complex-restriction walk is reproduced exactly, including the edge-status reset that
-    /// reverts permanently-labeled via edges (valhalla issue 2103).
+    /// Timed restrictions use the serialized restriction domain and the graph node's timezone.
+    /// The edge-status reset preserves the upstream fix for permanently labeled via edges.
     /// </remarks>
     /// <param name="edge">Directed edge being expanded onto.</param>
     /// <param name="pred">Predecessor edge label.</param>
@@ -669,11 +645,11 @@ public abstract class DynamicCost
                 {
                     if (currentTime != 0 && cr.HasDt())
                     {
-                        // PORT-NOTE: the conditional-active check depends on the excluded DateTime tz
-                        // database; IsConditionalActive throws until that slice is ported. The C++
-                        // packs the date-time fields into a TimeDomain-equivalent restriction value;
-                        // we forward the restriction's word-0 encoding unchanged.
-                        if (IsConditionalActive(0, currentTime, tzIndex))
+                        // Evaluate the exact packed date-time fields in the graph node's timezone.
+                        if (IsConditionalActive(
+                                cr.ToTimeDomain(),
+                                currentTime,
+                                tzIndex))
                         {
                             ResetEdgeStatus(edgeIdsInComplexRestriction);
                             return true;

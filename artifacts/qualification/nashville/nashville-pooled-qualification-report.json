@@ -1,0 +1,93 @@
+{
+  "campaign": "Nashville",
+  "pipeline": "PooledFrontier",
+  "branchSha": "7c80153e79ad5cc6f70120405c9faa78c963a7b6",
+  "pbfPath": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\artifacts\\nashville-metro.osm.pbf",
+  "pbfSha256": "1EA836D61D03CC9A4A018664D8E1406EE07B3F13D82B6DBC14E05F7A4BA27308",
+  "configPath": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\benchmarks\\config\\nashville-tennessee-3.8.3.json",
+  "oracle": "OfficialValhalla-3.8.3",
+  "machine": {
+    "vCpu": 16,
+    "memoryGiB": 23,
+    "diskGiB": 1024,
+    "hostName": "PAYTON-LEGION2"
+  },
+  "runs": [
+    {
+      "index": 0,
+      "role": "warm-up",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 80.438,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 1,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 55.384,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 74.326,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 86.367,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 76.842,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 54.791,
+      "peakWorkingSetBytes": 2505464883,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "A74B8A60C96B9BFC648E9B18837FB8FE93D470167CB3976FB123B54AF8FBDBC4",
+      "success": true,
+      "failure": null
+    }
+  ],
+  "verdict": {
+    "memoryGatePassed": true,
+    "performanceGatePassed": false,
+    "semanticGatePassed": true,
+    "status": "measured-nashville-metro-clip-awaiting-official-oracle",
+    "memoryRatioVsOfficial": null,
+    "performanceRatioVsOfficial": null,
+    "estimatedGcpCostUsd": null
+  },
+  "notes": "Warm-up \u002B five measured pooled builds on nashville-metro.osm.pbf (clipped from Geofabrik TN to metro bbox). Official Valhalla alternating oracle not available in this session; performance gate false (fail-closed per plan)."
+}

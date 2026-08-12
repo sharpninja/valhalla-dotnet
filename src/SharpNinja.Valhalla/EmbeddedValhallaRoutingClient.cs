@@ -193,7 +193,7 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 					trafficApplication.DelaySeconds));
 			}
 
-			return new OsmRouteResult(candidates, null);
+			return AttachGenerationStamp(new OsmRouteResult(candidates, null), request);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
@@ -258,6 +258,15 @@ public sealed class EmbeddedValhallaRoutingClient : IOsmRoutingClient
 	// ------------------------------------------------------------------
 	// (a) OsmRouteRequest -> Sif costing
 	// ------------------------------------------------------------------
+
+	internal static OsmRouteResult AttachGenerationStamp(
+		OsmRouteResult result,
+		OsmRouteRequest request)
+	{
+		ArgumentNullException.ThrowIfNull(result);
+		ArgumentNullException.ThrowIfNull(request);
+		return result with { GenerationStamp = request.GenerationLease?.Stamp };
+	}
 
 	// Mirrors ValhallaRoutingClient.NormalizeCosting exactly: "truck" (case-insensitive) => truck,
 	// anything else => auto.

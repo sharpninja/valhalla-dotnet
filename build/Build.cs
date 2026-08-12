@@ -11,7 +11,7 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 /// Publish. Local default target is Pack; CI runs Publish (which chains the rest) and reads the
 /// NuGet API key from the NUGET_API_KEY environment variable.
 /// </summary>
-class Build : NukeBuild
+partial class Build : NukeBuild
 {
     public static int Main() => Execute<Build>(x => x.Pack);
 

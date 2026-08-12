@@ -19,11 +19,13 @@
 // producing byte-identical tiles the Baldr GraphTile reader parses.
 //
 // PORT-NOTES / OMISSIONS (consistent with the established mjolnir port scope):
-//   - THREADING: the C++ validate() runs one worker thread per mjolnir.concurrency, popping a
-//     shuffled tile queue under a mutex and merging per-thread results. This port processes the tile
-//     set serially (matching the in-memory, single-threaded mjolnir port slice). The per-tile work is
-//     identical and order-independent (each tile reads its own + neighboring tiles read-only and
-//     writes only itself), so the resulting tiles are the same bytes the threaded build produces.
+//   - THREADING: validation supports bounded worker-local readers after the tile set and dataset
+//     identity are frozen. Requested concurrency is capped at the profiled degree of four because a
+//     Nashville DOP-16 probe exposed cross-tile read and binning contention. Worker caches divide the
+//     configured reader budget and read the frozen source graph while each worker writes only to a
+//     private validation tree. Per-worker results are merged deterministically; validated-tile
+//     publication, tweener writes, and checksums remain behind explicit barriers. The legacy overload
+//     stays serial.
 //   - EDGE BINNING (tweeners / GraphTileBuilder::BinEdges / AddBins): NOT ported. Edge bins are the
 //     spatial index used by loki edge-search-by-bin; this port snaps via the ported loki
 //     ClosestFirstGenerator over the tile node/edge geometry, not the bins, so the bin section and
@@ -37,7 +39,9 @@
 //     and density bookkeeping the C++ logs is surfaced on the stats object so tests can assert it.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Midgard;
@@ -52,6 +56,8 @@ namespace SharpNinja.Valhalla.Mjolnir;
 /// </summary>
 public static class GraphValidator
 {
+    private const int MaximumProfiledParallelValidationDegree = 4;
+
     // Custom comparator to sort by GraphId (level desc, tile_id asc, id asc). Faithful port of the
     // anonymous-namespace graphid_less (used by the excluded bin sort; reproduced for completeness).
     internal static bool GraphIdLess(GraphId a, GraphId b)
@@ -65,8 +71,32 @@ public static class GraphValidator
     /// </summary>
     public sealed class ValidatorStats
     {
+        private readonly Dictionary<string, TimeSpan> stageDurations =
+            new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TimeSpan> tileStageDurations =
+            new(StringComparer.Ordinal)
+            {
+                ["deserialize"] = TimeSpan.Zero,
+                ["edges"] = TimeSpan.Zero,
+                ["binning"] = TimeSpan.Zero,
+                ["update"] = TimeSpan.Zero,
+                ["add-bins"] = TimeSpan.Zero,
+            };
+
         /// <summary>Number of tiles validated (all levels).</summary>
         public int TileCount { get; set; }
+
+        /// <summary>Elapsed wall time for each validation sub-stage.</summary>
+        public IReadOnlyDictionary<string, TimeSpan> StageDurations => stageDurations;
+
+        /// <summary>Aggregate elapsed wall time for the measured per-tile validation stages.</summary>
+        public IReadOnlyDictionary<string, TimeSpan> TileStageDurations => tileStageDurations;
+
+        internal void RecordStageDuration(string stage, TimeSpan duration) =>
+            stageDurations[stage] = duration;
+
+        internal void AddTileStageDuration(string stage, TimeSpan duration) =>
+            tileStageDurations[stage] += duration;
 
         /// <summary>Possible duplicate-edge counts per hierarchy level (index = level).</summary>
         public uint[] Duplicates { get; } = new uint[TileHierarchy.GetTransitLevel().Level + 1];
@@ -95,10 +125,38 @@ public static class GraphValidator
     /// </summary>
     /// <param name="config">Reader configuration (tile dir + cache knobs).</param>
     /// <returns>Per-level duplicate / density statistics.</returns>
-    public static ValidatorStats Validate(GraphReader.Config config)
+    public static ValidatorStats Validate(GraphReader.Config config) =>
+        Validate(config, CancellationToken.None);
+
+    /// <summary>
+    /// Validates graph tiles while honoring cancellation between tiles, nodes, directed edges,
+    /// cross-tile bin writes, and final checksum passes.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader.Config config,
+        CancellationToken cancellationToken) =>
+        Validate(
+            config,
+            maxDegreeOfParallelism: 1,
+            cancellationToken);
+
+    /// <summary>
+    /// Validates graph tiles with bounded worker-local readers and deterministic result merging.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return Validate(new GraphReader(config), config.TileDir);
+        int effectiveDegree = ResolveParallelValidationDegree(
+            maxDegreeOfParallelism);
+        return effectiveDegree == 1
+            ? Validate(new GraphReader(config), config.TileDir, cancellationToken)
+            : ValidateParallel(
+                config,
+                effectiveDegree,
+                cancellationToken);
     }
 
     /// <summary>
@@ -108,12 +166,23 @@ public static class GraphValidator
     /// <param name="reader">Reader over the tile directory being validated.</param>
     /// <param name="tileDir">Tile directory the updated tiles are rewritten to.</param>
     /// <returns>Per-level duplicate / density statistics.</returns>
-    public static ValidatorStats Validate(GraphReader reader, string tileDir)
+    public static ValidatorStats Validate(GraphReader reader, string tileDir) =>
+        Validate(reader, tileDir, CancellationToken.None);
+
+    /// <summary>
+    /// Validates graph tiles through an existing reader with bounded cancellation checks.
+    /// </summary>
+    public static ValidatorStats Validate(
+        GraphReader reader,
+        string tileDir,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentException.ThrowIfNullOrEmpty(tileDir);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var stats = new ValidatorStats();
+        var stopwatch = Stopwatch.StartNew();
         byte transitLevel = TileHierarchy.GetTransitLevel().Level;
 
         // Vector to hold problem ways (TODO in C++ - "could be a useful list").
@@ -126,13 +195,37 @@ public static class GraphValidator
         tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
         stats.TileCount = tileSet.Count;
 
+        // Match Valhalla 3.8.3: tween-only tiles inherit the generation's dataset identity from the
+        // first existing tile instead of publishing a default zero identity.
+        ulong datasetId = 0;
+        if (tileSet.Count > 0)
+        {
+            GraphTile? firstTile = reader.GetGraphTile(tileSet[0]);
+            if (firstTile is null)
+            {
+                throw new InvalidDataException(
+                    "The graph tile set contains an unreadable first tile.");
+            }
+
+            datasetId = firstTile.Header().DatasetId();
+        }
+
         // Accumulator for edges that pass through tiles they neither start nor end in. Faithful
         // port of the tweeners_t accumulated across the per-tile validate() workers.
         var tweeners = new EdgeBinner.Tweeners();
 
         foreach (GraphId tileId in tileSet)
         {
-            ValidateTile(reader, tileDir, tileId, transitLevel, problemWays, stats, tweeners);
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateTile(
+                reader,
+                tileDir,
+                tileId,
+                transitLevel,
+                problemWays,
+                stats,
+                tweeners,
+                cancellationToken);
 
             // Check if we need to clear the tile cache.
             if (reader.OverCommitted())
@@ -141,12 +234,17 @@ public static class GraphValidator
             }
         }
 
+        stopwatch.Stop();
+        stats.RecordStageDuration("tiles", stopwatch.Elapsed);
+        stopwatch.Restart();
+
         // Run a pass to add the edges that binned to tweener tiles (faithful port of bin_tweeners).
         // The reader cache is dropped first so AddBins observes the just-rewritten local tiles.
         reader.Trim();
         byte localLevel = TileHierarchy.Levels()[^1].Level;
-        foreach (KeyValuePair<ulong, List<ulong>[]> tw in tweeners)
+        foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var tweenTileId = new GraphId(tw.Key);
             GraphTile? tile = GraphTile.Create(tileDir, tweenTileId);
             if (tile is null)
@@ -154,6 +252,7 @@ public static class GraphValidator
                 // Some tiles only exist because an edge's shape passes through them (no nodes/edges);
                 // create an empty tile to hold the spatial index. Faithful port of bin_tweeners.
                 var empty = new GraphTileBuilder(tweenTileId);
+                empty.HeaderBuilder.SetDatasetId(datasetId);
                 empty.StoreTileData(tileDir);
                 tile = GraphTile.Create(tileDir, tweenTileId);
                 if (tile is null)
@@ -172,7 +271,279 @@ public static class GraphValidator
             EdgeBinner.AddBins(tileDir, tile, tw.Value);
         }
 
+        stopwatch.Stop();
+        stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
+        stopwatch.Restart();
+
+        GraphTileChecksum.RefreshTilesetFiles(tileDir, cancellationToken);
+        stopwatch.Stop();
+        stats.RecordStageDuration("checksums", stopwatch.Elapsed);
         return stats;
+    }
+
+    internal static int ResolveParallelValidationDegree(
+        int requestedDegree)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requestedDegree);
+        return Math.Min(
+            requestedDegree,
+            MaximumProfiledParallelValidationDegree);
+    }
+
+    internal static GraphReader.Config CreateParallelWorkerConfig(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        return new GraphReader.Config
+        {
+            TileDir = config.TileDir,
+            MaxCacheSize = Math.Max(
+                1,
+                config.MaxCacheSize / maxDegreeOfParallelism),
+            UseLruMemCache = config.UseLruMemCache,
+            LruMemCacheHardControl = config.LruMemCacheHardControl,
+            UseSimpleMemCache = config.UseSimpleMemCache,
+            GlobalSynchronizedCache = config.GlobalSynchronizedCache,
+            MaxConcurrentReaderUsers = config.MaxConcurrentReaderUsers,
+            TrafficSnapshot = config.TrafficSnapshot,
+        };
+    }
+
+    private static ValidatorStats ValidateParallel(
+        GraphReader.Config config,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string validationOutputDirectory = CreateParallelValidationOutputDirectory(
+            config.TileDir);
+        try
+        {
+            var stats = new ValidatorStats();
+            var stopwatch = Stopwatch.StartNew();
+            byte transitLevel = TileHierarchy.GetTransitLevel().Level;
+            GraphReader.Config workerConfig = CreateParallelWorkerConfig(
+                config,
+                maxDegreeOfParallelism);
+            var discoveryReader = new GraphReader(workerConfig);
+            var tileSet = new List<GraphId>(discoveryReader.GetTileSet());
+            tileSet.Sort((a, b) => a.Value.CompareTo(b.Value));
+            stats.TileCount = tileSet.Count;
+
+            ulong datasetId = 0;
+            if (tileSet.Count > 0)
+            {
+                GraphTile? firstTile = discoveryReader.GetGraphTile(tileSet[0]);
+                if (firstTile is null)
+                {
+                    throw new InvalidDataException(
+                        "The graph tile set contains an unreadable first tile.");
+                }
+
+                datasetId = firstTile.Header().DatasetId();
+            }
+
+            discoveryReader.Clear();
+            var completedWorkers = new ConcurrentBag<ValidationWorker>();
+            Parallel.ForEach(
+                tileSet,
+                new ParallelOptions
+                {
+                    CancellationToken = cancellationToken,
+                    MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                },
+                () => new ValidationWorker(workerConfig),
+                (tileId, _, worker) =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ValidateTile(
+                        worker.Reader,
+                        validationOutputDirectory,
+                        tileId,
+                        transitLevel,
+                        worker.ProblemWays,
+                        worker.Stats,
+                        worker.Tweeners,
+                        cancellationToken);
+                    if (worker.Reader.OverCommitted())
+                    {
+                        worker.Reader.Trim();
+                    }
+
+                    return worker;
+                },
+                completedWorkers.Add);
+
+            var tweeners = new EdgeBinner.Tweeners();
+            foreach (ValidationWorker worker in completedWorkers)
+            {
+                MergeWorkerStats(stats, worker.Stats);
+                MergeTweeners(tweeners, worker.Tweeners);
+                worker.Reader.Trim();
+            }
+
+            PublishValidatedTiles(
+                validationOutputDirectory,
+                config.TileDir,
+                cancellationToken);
+
+            for (var level = 0; level < stats.Densities.Length; level++)
+            {
+                stats.Densities[level].Sort();
+            }
+
+            stopwatch.Stop();
+            stats.RecordStageDuration("tiles", stopwatch.Elapsed);
+            stopwatch.Restart();
+
+            discoveryReader.Trim();
+            byte localLevel = TileHierarchy.Levels()[^1].Level;
+            foreach (KeyValuePair<ulong, List<EdgeBinner.BinEntry>[]> tw in tweeners)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var tweenTileId = new GraphId(tw.Key);
+                GraphTile? tile = GraphTile.Create(config.TileDir, tweenTileId);
+                if (tile is null)
+                {
+                    var empty = new GraphTileBuilder(tweenTileId);
+                    empty.HeaderBuilder.SetDatasetId(datasetId);
+                    empty.StoreTileData(config.TileDir);
+                    tile = GraphTile.Create(config.TileDir, tweenTileId);
+                    if (tile is null)
+                    {
+                        continue;
+                    }
+                }
+
+                if (tile.Id().Level() != localLevel)
+                {
+                    continue;
+                }
+
+                EdgeBinner.SortBins(tw.Value);
+                EdgeBinner.AddBins(config.TileDir, tile, tw.Value);
+            }
+
+            stopwatch.Stop();
+            stats.RecordStageDuration("tweeners", stopwatch.Elapsed);
+            stopwatch.Restart();
+
+            GraphTileChecksum.RefreshTilesetFiles(config.TileDir, cancellationToken);
+            stopwatch.Stop();
+            stats.RecordStageDuration("checksums", stopwatch.Elapsed);
+            return stats;
+        }
+        finally
+        {
+            DeleteParallelValidationOutputDirectory(validationOutputDirectory);
+        }
+    }
+
+    private static string CreateParallelValidationOutputDirectory(string tileDirectory)
+    {
+        string fullTileDirectory = Path.GetFullPath(tileDirectory);
+        string? parentDirectory = Path.GetDirectoryName(fullTileDirectory);
+        if (parentDirectory is null)
+        {
+            throw new InvalidDataException("The graph tile directory has no parent directory.");
+        }
+
+        string directoryName = Path.GetFileName(fullTileDirectory);
+        string outputDirectory = Path.Combine(
+            parentDirectory,
+            $".{directoryName}.validation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        return outputDirectory;
+    }
+
+    private static void PublishValidatedTiles(
+        string validationOutputDirectory,
+        string tileDirectory,
+        CancellationToken cancellationToken)
+    {
+        string[] validatedTilePaths = Directory
+            .EnumerateFiles(validationOutputDirectory, "*.gph", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        foreach (string validatedTilePath in validatedTilePaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string relativePath = Path.GetRelativePath(
+                validationOutputDirectory,
+                validatedTilePath);
+            string targetPath = Path.Combine(tileDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            File.Move(validatedTilePath, targetPath, overwrite: true);
+        }
+    }
+
+    private static void DeleteParallelValidationOutputDirectory(string outputDirectory)
+    {
+        if (Directory.Exists(outputDirectory))
+        {
+            Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    private static void MergeWorkerStats(
+        ValidatorStats destination,
+        ValidatorStats source)
+    {
+        for (var level = 0; level < destination.Duplicates.Length; level++)
+        {
+            destination.Duplicates[level] = checked(
+                destination.Duplicates[level] + source.Duplicates[level]);
+            destination.Densities[level].AddRange(source.Densities[level]);
+        }
+
+        foreach ((string stage, TimeSpan duration) in source.TileStageDurations)
+        {
+            destination.AddTileStageDuration(stage, duration);
+        }
+    }
+
+    private static void MergeTweeners(
+        EdgeBinner.Tweeners destination,
+        EdgeBinner.Tweeners source)
+    {
+        foreach ((ulong tileId, List<EdgeBinner.BinEntry>[] sourceBins) in source)
+        {
+            if (!destination.TryGetValue(
+                    tileId,
+                    out List<EdgeBinner.BinEntry>[]? destinationBins))
+            {
+                destinationBins = new List<EdgeBinner.BinEntry>[sourceBins.Length];
+                for (var bin = 0; bin < destinationBins.Length; bin++)
+                {
+                    destinationBins[bin] = new List<EdgeBinner.BinEntry>();
+                }
+
+                destination.Add(tileId, destinationBins);
+            }
+
+            for (var bin = 0; bin < sourceBins.Length; bin++)
+            {
+                destinationBins[bin].AddRange(sourceBins[bin]);
+            }
+        }
+    }
+
+    private sealed class ValidationWorker
+    {
+        internal ValidationWorker(GraphReader.Config config)
+        {
+            Reader = new GraphReader(config);
+        }
+
+        internal GraphReader Reader { get; }
+
+        internal HashSet<ulong> ProblemWays { get; } = [];
+
+        internal ValidatorStats Stats { get; } = new();
+
+        internal EdgeBinner.Tweeners Tweeners { get; } = new();
     }
 
     // Faithful port of the per-tile body of the C++ validate() worker loop.
@@ -183,8 +554,10 @@ public static class GraphValidator
         byte transitLevel,
         HashSet<ulong> problemWays,
         ValidatorStats stats,
-        EdgeBinner.Tweeners tweeners)
+        EdgeBinner.Tweeners tweeners,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Point tiles to the set we need for current level.
         Tiles<PointLL, double> tiles = tileId.Level() == transitLevel
             ? TileHierarchy.GetTransitLevel().Tiles
@@ -200,8 +573,11 @@ public static class GraphValidator
         }
 
         // Get the tile builder (deserialize so it can be modified + re-stored).
+        long tileStageStart = Stopwatch.GetTimestamp();
         var tilebuilder = new GraphTileBuilder(tile);
+        stats.AddTileStageDuration("deserialize", Stopwatch.GetElapsedTime(tileStageStart));
 
+        tileStageStart = Stopwatch.GetTimestamp();
         // Update nodes and directed edges as needed.
         var nodes = new List<NodeInfo>();
         var directededges = new List<DirectedEdge>();
@@ -213,6 +589,8 @@ public static class GraphValidator
         GraphId node = tileId;
         for (uint i = 0; i < nodecount; i++, node += 1)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // The node we will modify.
             NodeInfo nodeinfo = tilebuilder.Node((int)i);
             NodeInfo ni = tile.Node((int)i);
@@ -226,13 +604,14 @@ public static class GraphValidator
                 }
             }
 
-            string beginNodeIso = tile.Admin((int)nodeinfo.AdminIndex).CountryIsoCode();
+            ushort beginNodeIso = tile.Admin((int)nodeinfo.AdminIndex).CountryIsoCodeValue;
 
             // Go through directed edges and validate/update data.
             uint idx = ni.EdgeIndex;
             var edgeid = new GraphId(node.Tileid(), node.Level(), idx);
             for (uint j = 0, n = nodeinfo.EdgeCount; j < n; j++, idx++, edgeid += 1)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 DirectedEdge de = tile.DirectedEdge((int)idx);
 
                 // Validate signs.
@@ -302,10 +681,10 @@ public static class GraphValidator
                 // Set the opposing edge index and get the country ISO at the end node. Set the deadend
                 // flag and internal flag (if the opposing edge is internal then make sure this edge is
                 // as well).
-                ulong wayid = tile.EdgeInfo(directededge).WayId;
+                ulong wayid = tile.EdgeInfoWayId(directededge);
                 uint oppIndex = GetOpposingEdgeIndex(
                     node, ref directededge, wayid, tile, endnodeTile, problemWays,
-                    ref dupcount, out string endNodeIso, transitLevel);
+                    ref dupcount, out ushort endNodeIso, transitLevel);
                 directededge.SetOppIndex(oppIndex);
                 if (directededge.Use == Use.TransitConnection ||
                     directededge.Use == Use.EgressConnection ||
@@ -315,8 +694,7 @@ public static class GraphValidator
                 }
 
                 // Mark a country crossing if country ISO codes do not match.
-                if (!string.IsNullOrEmpty(beginNodeIso) && !string.IsNullOrEmpty(endNodeIso) &&
-                    !string.Equals(beginNodeIso, endNodeIso, StringComparison.Ordinal))
+                if (beginNodeIso != 0 && endNodeIso != 0 && beginNodeIso != endNodeIso)
                 {
                     directededge.SetCtryCrossing(true);
                 }
@@ -385,15 +763,21 @@ public static class GraphValidator
         }
 
         tilebuilder.HeaderBuilder.SetDensity(relativeDensity);
+        stats.AddTileStageDuration("edges", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Bin the edges (compute this tile's own bins + accumulate cross-tile tweeners) BEFORE the
         // tile is rewritten, while the original shapes/edges are still readable. Faithful port of
         // GraphTileBuilder::BinEdges in graphvalidator.cc.
-        List<ulong>[] bins = EdgeBinner.BinEdges(tile, tweeners);
+        tileStageStart = Stopwatch.GetTimestamp();
+        List<EdgeBinner.BinEntry>[] bins = EdgeBinner.BinEdges(tile, tweeners);
+        stats.AddTileStageDuration("binning", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Write the new tile.
+        tileStageStart = Stopwatch.GetTimestamp();
         tilebuilder.Update(tileDir, nodes, directededges);
+        stats.AddTileStageDuration("update", Stopwatch.GetElapsedTime(tileStageStart));
 
+        tileStageStart = Stopwatch.GetTimestamp();
         // Write this tile's own bins to it (only the local / highest level carries bins). Reload the
         // just-written tile and append the bins, sorting each bin for deterministic output. Faithful
         // port of the "Write the bins to it" block in graphvalidator.cc.
@@ -406,6 +790,8 @@ public static class GraphValidator
                 EdgeBinner.AddBins(tileDir, reloaded, bins);
             }
         }
+
+        stats.AddTileStageDuration("add-bins", Stopwatch.GetElapsedTime(tileStageStart));
 
         // Add possible duplicates to return class.
         stats.Duplicates[level] += dupcount;
@@ -434,10 +820,10 @@ public static class GraphValidator
         GraphTile? endTile,
         HashSet<ulong> problemWays,
         ref uint dupcount,
-        out string endnodeiso,
+        out ushort endnodeiso,
         byte transitLevel)
     {
-        endnodeiso = string.Empty;
+        endnodeiso = 0;
         if (endTile is null)
         {
             // LOG_WARN("End tile invalid.");
@@ -458,7 +844,7 @@ public static class GraphValidator
         }
 
         // Set the end node iso. Used for country crossings.
-        endnodeiso = endTile.Admin((int)nodeinfo.AdminIndex).CountryIsoCode();
+        endnodeiso = endTile.Admin((int)nodeinfo.AdminIndex).CountryIsoCodeValue;
 
         // Set the deadend flag on the edge.
         bool deadend = nodeinfo.Intersection == IntersectionType.DeadEnd;
@@ -482,7 +868,7 @@ public static class GraphValidator
 
             // Transit connections. Match opposing edge if same way Id.
             if (edge.Use == Use.TransitConnection && directededge.Use == Use.TransitConnection &&
-                wayid == endTile.EdgeInfo(directededge).WayId)
+                wayid == endTile.EdgeInfoWayId(directededge))
             {
                 oppIndex = i;
                 continue;
@@ -547,7 +933,7 @@ public static class GraphValidator
                 {
                     // Regular edges - match wayids and edge info offset (if in same tile) or shape (if
                     // not in same tile).
-                    wayid2 = endTile.EdgeInfo(directededge).WayId;
+                    wayid2 = endTile.EdgeInfoWayId(directededge);
                     if (wayid == wayid2)
                     {
                         if (sametile && edge.EdgeInfoOffset == directededge.EdgeInfoOffset)

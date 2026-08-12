@@ -37,6 +37,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 
 using SharpNinja.Valhalla.Baldr;
@@ -143,6 +144,12 @@ public sealed class TileBuilderConfig
 
     /// <summary>Max reader cache size in bytes for the GraphReader-based stages (filter/hierarchy/shortcuts/restrictions).</summary>
     public long MaxCacheSize { get; init; } = 1L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum tile-local construction concurrency. Global graph identities and indexes are frozen
+    /// before this bounded parallel stage begins.
+    /// </summary>
+    public int MaxDegreeOfParallelism { get; init; } = 1;
 }
 
 /// <summary>
@@ -181,6 +188,18 @@ public sealed class TileBuilderResult
 
     /// <summary>Statistics from the validate stage (or null if validation did not run).</summary>
     public GraphValidator.ValidatorStats? ValidatorStats { get; set; }
+
+    /// <summary>
+    /// Elapsed wall time for pipeline stages and aggregate worker time for <c>.tile.</c> sub-stages.
+    /// </summary>
+    public IReadOnlyDictionary<string, TimeSpan> StageDurations =>
+        stageDurations;
+
+    private readonly Dictionary<string, TimeSpan> stageDurations =
+        new(StringComparer.Ordinal);
+
+    internal void RecordStageDuration(string stage, TimeSpan duration) =>
+        stageDurations[stage] = duration;
 }
 
 /// <summary>
@@ -209,74 +228,136 @@ public static class TileBuilder
         TileBuilderConfig? config = null)
     {
         ArgumentNullException.ThrowIfNull(pbfPaths);
+        return BuildTileSet(
+            new FileOsmPbfEntitySource(pbfPaths),
+            tileDir,
+            config,
+            CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Builds a graph from a replayable entity source. Build-time tooling uses this overload to
+    /// decode PBF blocks once and replay normalized entities from bounded intermediate storage.
+    /// </summary>
+    public static TileBuilderResult BuildTileSet(
+        IOsmPbfEntitySource entitySource,
+        string tileDir,
+        TileBuilderConfig? config = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entitySource);
         ArgumentException.ThrowIfNullOrEmpty(tileDir);
+        cancellationToken.ThrowIfCancellationRequested();
 
         config ??= new TileBuilderConfig();
-        var result = new TileBuilderResult();
+        string normalizedTileDir = NormalizeTileDir(tileDir);
+        InitializeTileDir(normalizedTileDir);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        // Normalize the tile directory so it ends with the platform separator (C++ pushes back
-        // std::filesystem::path::preferred_separator when missing).
-        if (!tileDir.EndsWith(Path.DirectorySeparatorChar) && !tileDir.EndsWith(Path.AltDirectorySeparatorChar))
+        var parser = new PbfGraphParser(config.ParserOptions);
+        OSMData osmdata = parser.Parse(entitySource, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return BuildParsedTileSetCore(
+            parser,
+            osmdata,
+            normalizedTileDir,
+            config,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Builds tiles from an already parsed OSM graph. This consumes the parser's large build
+    /// sequences and releases their backing arrays immediately after local graph construction.
+    /// </summary>
+    public static TileBuilderResult BuildParsedTileSet(
+        PbfGraphParser parser,
+        OSMData osmdata,
+        string tileDir,
+        TileBuilderConfig? config = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(parser);
+        ArgumentNullException.ThrowIfNull(osmdata);
+        ArgumentException.ThrowIfNullOrEmpty(tileDir);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        config ??= new TileBuilderConfig();
+        string normalizedTileDir = NormalizeTileDir(tileDir);
+        InitializeTileDir(normalizedTileDir);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return BuildParsedTileSetCore(
+            parser,
+            osmdata,
+            normalizedTileDir,
+            config,
+            cancellationToken);
+    }
+
+    private static TileBuilderResult BuildParsedTileSetCore(
+        PbfGraphParser parser,
+        OSMData osmdata,
+        string tileDir,
+        TileBuilderConfig config,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<OSMRestriction> complexRestrictionsFrom = parser.ComplexRestrictionsFrom;
+        IReadOnlyList<OSMRestriction> complexRestrictionsTo = parser.ComplexRestrictionsTo;
+        var result = new TileBuilderResult
         {
-            tileDir += Path.DirectorySeparatorChar;
+            TileDir = tileDir,
+            WayCount = parser.Ways.Count,
+            WayNodeCount = parser.WayNodes.Count,
+        };
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        Dictionary<GraphId, byte[]> tiles;
+        try
+        {
+            tiles = BuildLocalTiles(
+                parser,
+                osmdata,
+                config,
+                result,
+                cancellationToken);
+        }
+        finally
+        {
+            parser.ReleaseBuildSequences();
         }
 
-        result.TileDir = tileDir;
-
-        // ---- kInitialize ------------------------------------------------------
-        // During the initialize stage the tile directory is purged (per hierarchy level) if it
-        // already exists and re-created if it does not (build_tile_set, util.cc).
-        InitializeTileDir(tileDir);
-
-        // ---- kParseWays / kParseRelations / kParseNodes -----------------------
-        // PBFGraphParser runs three passes over the input(s). The ported PbfGraphParser fuses the
-        // passes into Parse(...) (ParseWays -> ParseNodes -> ParseRelations) and keeps every
-        // collection in memory rather than spilling them to ways.bin / way_nodes.bin / etc.
-        var parser = new PbfGraphParser(config.ParserOptions);
-        OSMData osmdata = parser.Parse(pbfPaths);
-
-        IReadOnlyList<OSMWay> ways = parser.Ways;
-        IReadOnlyList<OSMWayNode> wayNodes = parser.WayNodes;
-        result.WayCount = ways.Count;
-        result.WayNodeCount = wayNodes.Count;
-
-        // ---- kConstructEdges --------------------------------------------------
-        // GraphBuilder::BuildEdges constructs the intermediate graph (edges + tiled, sorted nodes)
-        // and produces the tile manifest (the in-memory Graph.Tiles map replaces tile_manifest.json).
-        GraphBuilder.Graph graph = GraphBuilder.BuildEdges(
-            ways,
-            wayNodes,
-            config.GridDivisions,
-            config.ParserOptions.InferTurnChannels);
-
-        // ---- kBuild -----------------------------------------------------------
-        // GraphBuilder::Build builds the baldr tiles from the OSMData + intermediate graph.
-        Dictionary<GraphId, byte[]> tiles = GraphBuilder.Build(
-            osmdata,
-            ways,
-            wayNodes,
-            graph,
-            config.TileCreationDate);
+        cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kEnhance ---------------------------------------------------------
-        // GraphEnhancer::Enhance adds density / transition logic / turn lanes to the local level.
-        // The ported enhancer works on the in-memory tile blobs and returns the enhanced blobs.
+        var stageStopwatch = Stopwatch.StartNew();
         var enhancer = new GraphEnhancer();
         Dictionary<GraphId, byte[]> enhanced = enhancer.Enhance(
             tiles,
             config.ParserOptions.InferInternalIntersections,
-            config.ParserOptions.InferTurnChannels);
+            config.ParserOptions.InferTurnChannels,
+            config.MaxDegreeOfParallelism,
+            cancellationToken);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("enhance", stageStopwatch.Elapsed);
         result.EnhancerStats = enhancer.Stats;
+        foreach ((string enhancementStage, TimeSpan duration) in
+                 result.EnhancerStats.StageDurations)
+        {
+            result.RecordStageDuration($"enhance.tile.{enhancementStage}", duration);
+        }
 
-        // Flush the built + enhanced tiles to disk so the GraphReader-based stages (filter /
-        // hierarchy / shortcuts / restrictions) read them, exactly as build_tile_set leaves the
-        // tiles on disk between stages.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        stageStopwatch.Restart();
         FlushTilesToDisk(tileDir, enhanced);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("flush", stageStopwatch.Elapsed);
         result.TileCount = enhanced.Count;
+        cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kFilter ----------------------------------------------------------
-        // GraphFilter::Filter optionally removes edges/nodes for disabled access modes. A no-op when
-        // all three modes are enabled (matching the C++ early return).
         if (!(config.IncludeDriving && config.IncludeBicycle && config.IncludePedestrian))
         {
             result.FilterStats = GraphFilter.Filter(new GraphFilter.FilterConfig
@@ -286,55 +367,126 @@ public static class TileBuilder
                 IncludeBicycle = config.IncludeBicycle,
                 IncludePedestrian = config.IncludePedestrian,
             });
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         // ---- kTransit / kBss --------------------------------------------------
-        // EXCLUDED: TransitBuilder::Build and BssBuilder::Build are out of scope for the auto/truck
-        // graph build (transit + bike-share). build_tile_set would run them here.
+        // The dedicated generation package composes these ancillary stages after the road graph.
 
         // ---- kHierarchy / kShortcuts -----------------------------------------
-        // Builds additional hierarchies if mjolnir.hierarchy is set; shortcuts only if hierarchy is
-        // also built and mjolnir.shortcuts is set (shortcuts require the hierarchy).
         if (config.Hierarchy)
         {
-            HierarchyBuilder.Build(MakeReaderConfig(tileDir, config));
+            stageStopwatch.Restart();
+            HierarchyBuildResult hierarchyResult =
+                HierarchyBuilder.Build(
+                    MakeReaderConfig(tileDir, config),
+                    config.MaxDegreeOfParallelism,
+                    cancellationToken);
+            stageStopwatch.Stop();
+            result.RecordStageDuration("hierarchy", stageStopwatch.Elapsed);
+            foreach ((string hierarchyStage, TimeSpan duration) in hierarchyResult.StageDurations)
+            {
+                result.RecordStageDuration($"hierarchy.{hierarchyStage}", duration);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (config.Shortcuts)
             {
-                result.ShortcutStats = ShortcutBuilder.Build(MakeReaderConfig(tileDir, config));
+                stageStopwatch.Restart();
+                result.ShortcutStats = ShortcutBuilder.Build(
+                    MakeReaderConfig(tileDir, config));
+                stageStopwatch.Stop();
+                result.RecordStageDuration("shortcuts", stageStopwatch.Elapsed);
+                cancellationToken.ThrowIfCancellationRequested();
             }
         }
 
         // ---- kElevation -------------------------------------------------------
-        // EXCLUDED: ElevationBuilder::Build is out of scope (no elevation source on-device).
-        // build_tile_set would run elevation before restrictions.
+        // The dedicated generation package composes elevation after the road graph.
 
         // ---- kRestrictions ----------------------------------------------------
-        // RestrictionBuilder::Build adds the complex (multi-via) turn restrictions. In C++ these are
-        // read back from complex_from_restrictions.bin / complex_to_restrictions.bin; here they come
-        // straight from the parser output. Must run after hierarchy/shortcuts so it stamps every
-        // level's tiles (the ported Build iterates all hierarchy levels).
+        stageStopwatch.Restart();
         var restrictionReader = new GraphReader(MakeReaderConfig(tileDir, config));
         result.RestrictionResults = RestrictionBuilder.Build(
             restrictionReader,
-            parser.ComplexRestrictionsFrom,
-            parser.ComplexRestrictionsTo);
+            complexRestrictionsFrom,
+            complexRestrictionsTo);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("restrictions", stageStopwatch.Elapsed);
+        cancellationToken.ThrowIfCancellationRequested();
 
         // ---- kValidate --------------------------------------------------------
-        // GraphValidator::Validate sets the opposing-edge indexes, leaves-tile / deadend / internal /
-        // country-crossing flags, re-validates complex restriction modes, and stamps the relative road
-        // density into each tile header. It must run after the full graph is formed (hierarchy /
-        // shortcuts / restrictions) because the opposing-edge / density data spans the whole graph.
-        // The bidirectional A* relies on this (GetOpposingEdgeId walks de.OppIndex; GetEdgeDensity
-        // reads node.Density).
-        result.ValidatorStats = GraphValidator.Validate(MakeReaderConfig(tileDir, config));
+        stageStopwatch.Restart();
+        result.ValidatorStats = GraphValidator.Validate(
+            MakeReaderConfig(tileDir, config),
+            config.MaxDegreeOfParallelism,
+            cancellationToken);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("validate", stageStopwatch.Elapsed);
+        foreach ((string validationStage, TimeSpan duration) in
+                 result.ValidatorStats.StageDurations)
+        {
+            result.RecordStageDuration($"validate.{validationStage}", duration);
+        }
 
-        // ---- kCleanup ---------------------------------------------------------
-        // No temporary *.bin files are written by the in-memory port, so cleanup is a no-op. Only the
-        // final .gph tiles remain in the tile directory.
+        foreach ((string tileStage, TimeSpan duration) in
+                 result.ValidatorStats.TileStageDurations)
+        {
+            result.RecordStageDuration($"validate.tile.{tileStage}", duration);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         result.Success = true;
         return result;
+    }
+
+    private static Dictionary<GraphId, byte[]> BuildLocalTiles(
+        PbfGraphParser parser,
+        OSMData osmdata,
+        TileBuilderConfig config,
+        TileBuilderResult result,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<OSMWay> ways = parser.Ways;
+        IReadOnlyList<OSMWayNode> wayNodes = parser.WayNodes;
+        var stageStopwatch = Stopwatch.StartNew();
+
+        // ---- kConstructEdges --------------------------------------------------
+        GraphBuilder.Graph graph = GraphBuilder.BuildEdges(
+            ways,
+            wayNodes,
+            config.GridDivisions,
+            config.ParserOptions.InferTurnChannels);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("constructEdges", stageStopwatch.Elapsed);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // ---- kBuild -----------------------------------------------------------
+        stageStopwatch.Restart();
+        Dictionary<GraphId, byte[]> tiles = GraphBuilder.Build(
+            osmdata,
+            ways,
+            wayNodes,
+            graph,
+            config.TileCreationDate,
+            config.MaxDegreeOfParallelism,
+            cancellationToken);
+        stageStopwatch.Stop();
+        result.RecordStageDuration("build", stageStopwatch.Elapsed);
+        return tiles;
+    }
+
+    private static string NormalizeTileDir(string tileDir)
+    {
+        if (!tileDir.EndsWith(Path.DirectorySeparatorChar) &&
+            !tileDir.EndsWith(Path.AltDirectorySeparatorChar))
+        {
+            return tileDir + Path.DirectorySeparatorChar;
+        }
+
+        return tileDir;
     }
 
     /// <summary>

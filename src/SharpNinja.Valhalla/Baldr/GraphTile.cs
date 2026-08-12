@@ -92,15 +92,14 @@ public sealed class GraphTile : IGraphTilePtr
     private const int TurnLanesSize = 8;       // sizeof(TurnLanes)
     private const int AdminSize = 16;          // sizeof(Admin)
     private const int GraphIdSize = 8;         // sizeof(GraphId)
+    private const int BoundingCircleSize = DiscretizedBoundingCircle.SizeOf;
 
-    // PORT-NOTE: transit record sizes (transit* excluded; only used to skip the sections).
-    //   TransitDeparture: 32 bytes, TransitStop: 8, TransitRoute: 92, TransitSchedule: 16,
-    //   TransitTransfer: 16 (from valhalla/baldr/transit*.h static_asserts).
-    private const int TransitDepartureSize = 32;
+    // Valhalla 3.8.3 packed transit record sizes.
+    private const int TransitDepartureSize = 24;
     private const int TransitStopSize = 8;
-    private const int TransitRouteSize = 92;
+    private const int TransitRouteSize = 40;
     private const int TransitScheduleSize = 16;
-    private const int TransitTransferSize = 16;
+    private const int TransitTransferSize = 12;
 
     // The owned tile blob.
     private readonly GraphMemory _memory;
@@ -117,6 +116,11 @@ public sealed class GraphTile : IGraphTilePtr
     private readonly int _directedEdgesOffset;
     private readonly int _extDirectedEdgesOffset; // -1 when absent
     private readonly int _accessRestrictionsOffset;
+    private readonly int _departuresOffset;
+    private readonly int _stopsOffset;
+    private readonly int _routesOffset;
+    private readonly int _schedulesOffset;
+    private readonly int _transfersOffset;
     private readonly int _signsOffset;
     private readonly int _turnLanesOffset;
     private readonly int _adminsOffset;
@@ -204,11 +208,19 @@ public sealed class GraphTile : IGraphTilePtr
         _accessRestrictionsOffset = ptr;
         ptr += checked((int)_header.AccessRestrictionCount() * AccessRestrictionSize);
 
-        // PORT-NOTE: transit sections are skipped over (transit* excluded) using documented sizes.
+        _departuresOffset = ptr;
         ptr += checked((int)_header.Departurecount() * TransitDepartureSize);
+
+        _stopsOffset = ptr;
         ptr += checked((int)_header.Stopcount() * TransitStopSize);
+
+        _routesOffset = ptr;
         ptr += checked((int)_header.Routecount() * TransitRouteSize);
+
+        _schedulesOffset = ptr;
         ptr += checked((int)_header.Schedulecount() * TransitScheduleSize);
+
+        _transfersOffset = ptr;
         ptr += checked((int)_header.Transfercount() * TransitTransferSize);
 
         _signsOffset = ptr;
@@ -442,6 +454,29 @@ public sealed class GraphTile : IGraphTilePtr
 
     /// <summary>Gets the tile header. Faithful port of <c>header()</c>.</summary>
     public GraphTileHeader Header() => _header;
+
+    /// <summary>
+    /// Returns the historical/predicted speed for a directed edge and local second of week.
+    /// </summary>
+    public float PredictedSpeed(uint directedEdgeIndex, uint secondsOfWeek)
+    {
+        if (directedEdgeIndex >= _header.Directededgecount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(directedEdgeIndex));
+        }
+
+        if (!DirectedEdge((int)directedEdgeIndex).HasPredictedSpeed)
+        {
+            throw new InvalidOperationException(
+                $"Directed edge {directedEdgeIndex} has no predicted speed profile.");
+        }
+
+        return _predictedSpeeds.Speed(directedEdgeIndex, secondsOfWeek);
+    }
+
+    internal uint[] CopyPredictedSpeedOffsets() => _predictedSpeeds.CopyOffsets();
+
+    internal short[] CopyPredictedSpeedProfiles() => _predictedSpeeds.CopyProfiles();
 
     /// <summary>
     /// Returns a fresh copy of the entire tile image (header through end offset). Used by the
@@ -690,6 +725,85 @@ public sealed class GraphTile : IGraphTilePtr
     }
 
     // ------------------------------------------------------------------
+    // Transit
+    // ------------------------------------------------------------------
+
+    /// <summary>Gets a transit departure by tile-local index.</summary>
+    public TransitDeparture TransitDeparture(int index)
+    {
+        if ((uint)index >= _header.Departurecount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return ReadTransitDeparture(index);
+    }
+
+    /// <summary>Gets a transit stop by tile-local index.</summary>
+    public TransitStop TransitStop(int index)
+    {
+        if ((uint)index >= _header.Stopcount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return ReadTransitStop(index);
+    }
+
+    /// <summary>Gets a transit route by tile-local index.</summary>
+    public TransitRoute TransitRoute(int index)
+    {
+        if ((uint)index >= _header.Routecount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return ReadTransitRoute(index);
+    }
+
+    /// <summary>Gets a transit schedule by tile-local index.</summary>
+    public TransitSchedule TransitSchedule(int index)
+    {
+        if ((uint)index >= _header.Schedulecount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return ReadTransitSchedule(index);
+    }
+
+    /// <summary>Gets a transit transfer by tile-local index.</summary>
+    public TransitTransfer TransitTransfer(int index)
+    {
+        if ((uint)index >= _header.Transfercount())
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return ReadTransitTransfer(index);
+    }
+
+    /// <summary>Gets every transit departure in on-disk order.</summary>
+    public IReadOnlyList<TransitDeparture> GetTransitDepartures()
+        => ReadTransitRecords((int)_header.Departurecount(), ReadTransitDeparture);
+
+    /// <summary>Gets every transit stop in on-disk order.</summary>
+    public IReadOnlyList<TransitStop> GetTransitStops()
+        => ReadTransitRecords((int)_header.Stopcount(), ReadTransitStop);
+
+    /// <summary>Gets every transit route in on-disk order.</summary>
+    public IReadOnlyList<TransitRoute> GetTransitRoutes()
+        => ReadTransitRecords((int)_header.Routecount(), ReadTransitRoute);
+
+    /// <summary>Gets every transit schedule in on-disk order.</summary>
+    public IReadOnlyList<TransitSchedule> GetTransitSchedules()
+        => ReadTransitRecords((int)_header.Schedulecount(), ReadTransitSchedule);
+
+    /// <summary>Gets every transit transfer in on-disk order.</summary>
+    public IReadOnlyList<TransitTransfer> GetTransitTransfers()
+        => ReadTransitRecords((int)_header.Transfercount(), ReadTransitTransfer);
+
+    // ------------------------------------------------------------------
     // Edge info / names / signs
     // ------------------------------------------------------------------
 
@@ -734,6 +848,41 @@ public sealed class GraphTile : IGraphTilePtr
         }
 
         return buf;
+    }
+
+    /// <summary>
+    /// Reads only the OSM way identifier for a directed edge without constructing an
+    /// <see cref="EdgeInfoRec"/> object or decoding its names and shape.
+    /// </summary>
+    internal ulong EdgeInfoWayId(DirectedEdgeRec edge)
+    {
+        int ptr = _edgeInfoOffset + checked((int)edge.EdgeInfoOffset);
+        uint word0 = ReadUInt32(_blob, ptr);
+        uint word1 = ReadUInt32(_blob, ptr + 4);
+        uint word2 = ReadUInt32(_blob, ptr + 8);
+
+        ulong wayId =
+            word0 |
+            ((ulong)((word1 >> 24) & 0xFFu) << 32) |
+            ((ulong)((word2 >> 20) & 0xFFu) << 40);
+
+        uint extendedWayIdSize = (word2 >> 28) & 0x3u;
+        int extendedWayIdOffset =
+            ptr +
+            EdgeInfoRec.EdgeInfoInnerSize +
+            checked((int)(word2 & 0xFu) * EdgeInfoRec.NameInfoSize) +
+            checked((int)((word2 >> 4) & 0xFFFFu));
+        if (extendedWayIdSize > 0)
+        {
+            wayId |= (ulong)_blob[extendedWayIdOffset] << 48;
+        }
+
+        if (extendedWayIdSize > 1)
+        {
+            wayId |= (ulong)_blob[extendedWayIdOffset + 1] << 56;
+        }
+
+        return wayId;
     }
 
     /// <summary>Gets the edge info for a directed edge. Faithful port of <c>edgeinfo(const DirectedEdge*)</c>.</summary>
@@ -1074,6 +1223,38 @@ public sealed class GraphTile : IGraphTilePtr
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Gets the Valhalla 3.8.3 discretized bounding circles aligned one-for-one with a bin's
+    /// GraphIds. Legacy tiles return an empty collection.
+    /// </summary>
+    public IReadOnlyList<DiscretizedBoundingCircle> GetBoundingCircles(
+        int column,
+        int row)
+        => GetBoundingCircles((row * GraphTileHeader.BinsDim) + column);
+
+    /// <summary>Gets the discretized bounding circles for a row-major bin index.</summary>
+    public IReadOnlyList<DiscretizedBoundingCircle> GetBoundingCircles(int index)
+    {
+        if (!_header.HasBoundingCircles())
+        {
+            return [];
+        }
+
+        (uint begin, uint end) = _header.BinOffset(index);
+        var circles = new List<DiscretizedBoundingCircle>((int)(end - begin));
+        int sectionOffset =
+            _memory.Offset + checked((int)_header.BoundingCircleOffset());
+        for (uint circleIndex = begin; circleIndex < end; circleIndex++)
+        {
+            uint rawValue = ReadUInt32(
+                _blob,
+                sectionOffset + checked((int)circleIndex * BoundingCircleSize));
+            circles.Add(DiscretizedBoundingCircle.FromRaw(rawValue));
+        }
+
+        return circles;
     }
 
     // ------------------------------------------------------------------
@@ -1560,6 +1741,37 @@ public sealed class GraphTile : IGraphTilePtr
     private AccessRestriction ReadAccessRestriction(int idx)
         => MemoryMarshal.Read<AccessRestriction>(
             _blob.AsSpan(_accessRestrictionsOffset + (idx * AccessRestrictionSize), AccessRestrictionSize));
+
+    private TransitDeparture ReadTransitDeparture(int idx)
+        => MemoryMarshal.Read<TransitDeparture>(
+            _blob.AsSpan(_departuresOffset + (idx * TransitDepartureSize), TransitDepartureSize));
+
+    private TransitStop ReadTransitStop(int idx)
+        => MemoryMarshal.Read<TransitStop>(
+            _blob.AsSpan(_stopsOffset + (idx * TransitStopSize), TransitStopSize));
+
+    private TransitRoute ReadTransitRoute(int idx)
+        => MemoryMarshal.Read<TransitRoute>(
+            _blob.AsSpan(_routesOffset + (idx * TransitRouteSize), TransitRouteSize));
+
+    private TransitSchedule ReadTransitSchedule(int idx)
+        => MemoryMarshal.Read<TransitSchedule>(
+            _blob.AsSpan(_schedulesOffset + (idx * TransitScheduleSize), TransitScheduleSize));
+
+    private TransitTransfer ReadTransitTransfer(int idx)
+        => MemoryMarshal.Read<TransitTransfer>(
+            _blob.AsSpan(_transfersOffset + (idx * TransitTransferSize), TransitTransferSize));
+
+    private static IReadOnlyList<T> ReadTransitRecords<T>(int count, Func<int, T> reader)
+    {
+        var records = new List<T>(count);
+        for (int index = 0; index < count; index++)
+        {
+            records.Add(reader(index));
+        }
+
+        return records;
+    }
 
     private Sign ReadSign(int idx)
         => MemoryMarshal.Read<Sign>(_blob.AsSpan(_signsOffset + (idx * SignSize), SignSize));

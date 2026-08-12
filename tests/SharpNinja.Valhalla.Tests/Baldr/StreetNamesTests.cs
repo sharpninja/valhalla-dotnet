@@ -84,6 +84,26 @@ public class StreetNamesTests
             Names(("B 2", true), ("B 5", true)));
     }
 
+    [Fact]
+    public void HasCommonBaseName_MatchesFindCommonBaseNamesPresence()
+    {
+        static void AssertEquivalent(StreetNames lhs, StreetNames rhs) =>
+            Assert.Equal(
+                lhs.FindCommonBaseNames(rhs).Count != 0,
+                lhs.HasCommonBaseName(rhs));
+
+        AssertEquivalent(
+            Names(("Hershey Road", false), ("PA 743 North", true)),
+            Names(("Fishburn Road", false), ("PA 743 North", true)));
+        AssertEquivalent(
+            Names(("Hershey Road", false), ("PA 743 North", true)),
+            Names(("Fishburn Road", false), ("PA 283", true)));
+        AssertEquivalent(
+            Names(("Unter den Linden", false), ("B 2", true), ("B 5", true)),
+            Names(("B 2", true), ("B 5", true)));
+        AssertEquivalent(Names(), Names());
+    }
+
     private static void TryGetRouteNumbers(StreetNames streetNames, StreetNames expected)
     {
         StreetNames computed = streetNames.GetRouteNumbers();
