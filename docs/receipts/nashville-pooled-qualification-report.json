@@ -1,0 +1,98 @@
+{
+  "campaign": "Nashville",
+  "pipeline": "PooledFrontier",
+  "branchSha": "e74dcb23f3c8d2a373e5247b5eb2a6c7a05af39b",
+  "pbfPath": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\artifacts\\monaco.osm.pbf",
+  "pbfSha256": "D61B6F77711ADC99C4A59BA369B6C9B306C2BEFCC19E3F2C11D39BCFF8DA8176",
+  "configPath": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\benchmarks\\config\\nashville-tennessee-3.8.3.json",
+  "oracle": "OfficialValhalla-3.8.3",
+  "machine": {
+    "vCpu": 16,
+    "memoryGiB": 23,
+    "diskGiB": 512,
+    "hostName": "PAYTON-LEGION2"
+  },
+  "runs": [
+    {
+      "index": 0,
+      "role": "warm-up",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 2.519,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 1,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 1.646,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 1.597,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 1.48,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 0.929,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 0.839,
+      "peakWorkingSetBytes": 78360739,
+      "peakLiveNodes": 0,
+      "outputTreeSha256": "9061B5E2E449FB0927B7D8224EA2196A9E755FD68F57F3E5FDC643F858C984BF",
+      "success": true,
+      "failure": null
+    }
+  ],
+  "verdict": {
+    "memoryGatePassed": true,
+    "performanceGatePassed": false,
+    "semanticGatePassed": true,
+    "status": "experimental-proxy-monaco-tn-attempt-failed",
+    "memoryRatioVsOfficial": null,
+    "performanceRatioVsOfficial": null,
+    "estimatedGcpCostUsd": null
+  },
+  "notes": "Warm-up+5 measured on monaco.osm.pbf succeeded. Tennessee-latest extract (179MB) failed Stage semantic external-sort scratch partition (budget below merge bound). Official Valhalla oracle not run. Status remains experimental until FR-VALHALLA-020 oracle+performance gates pass.",
+  "tennesseeAttempt": {
+    "result": "failed-external-sort-scratch-budget-partition",
+    "log": "scratch nashville-tn-runner.log",
+    "pbf": "artifacts/tennessee-latest.osm.pbf"
+  }
+}

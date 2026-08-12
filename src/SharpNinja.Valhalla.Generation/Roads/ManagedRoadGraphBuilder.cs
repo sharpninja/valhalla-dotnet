@@ -196,11 +196,18 @@ public sealed class ManagedRoadGraphBuilder
             string intermediateDirectory,
             CancellationToken cancellationToken)
     {
+        // Memory is partitioned evenly. Scratch is front-loaded for semantic
+        // external-sort merge bounds (large extracts need 2*run + output on disk).
         long stageMemoryBudget = request.MemoryBudgetBytes / 3;
-        long stageScratchBudget = request.ScratchDiskBudgetBytes / 3;
+        long stageScratchBudget = request.ScratchDiskBudgetBytes / 2;
+        long graphStageScratchBudget = request.ScratchDiskBudgetBytes / 6;
         long finalStageScratchBudget = request.ScratchDiskBudgetBytes -
-            (stageScratchBudget * 2);
-        if (stageMemoryBudget <= 0 || stageScratchBudget <= 0)
+            stageScratchBudget -
+            graphStageScratchBudget;
+        if (stageMemoryBudget <= 0 ||
+            stageScratchBudget <= 0 ||
+            graphStageScratchBudget <= 0 ||
+            finalStageScratchBudget <= 0)
         {
             throw new ValhallaGenerationResourceLimitException(
                 "The pooled road-graph pipeline cannot partition the configured " +
@@ -292,7 +299,7 @@ public sealed class ManagedRoadGraphBuilder
             const long perWorkerScratchBytes = 16L * 1024 * 1024;
             int selectedDop = AdaptiveGenerationParallelism.FitWorkerCount(
                 stageMemoryBudget,
-                stageScratchBudget,
+                graphStageScratchBudget,
                 perWorkerMemoryBytes,
                 perWorkerScratchBytes,
                 tileBuilderConfig.MaxDegreeOfParallelism);
