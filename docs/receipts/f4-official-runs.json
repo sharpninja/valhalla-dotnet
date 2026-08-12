@@ -1,0 +1,68 @@
+[
+  {
+    "index": 0,
+    "role": "warm-up",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 199.121,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 1,
+    "role": "measured",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 192.994,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 2,
+    "role": "measured",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 173.692,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 3,
+    "role": "measured",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 174.035,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 4,
+    "role": "measured",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 175.37,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 5,
+    "role": "measured",
+    "pipeline": "OfficialValhalla-3.8.3",
+    "durationSeconds": 173.555,
+    "peakWorkingSetBytes": 0,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "TILE_FILES_8",
+    "success": true,
+    "failure": null
+  }
+]

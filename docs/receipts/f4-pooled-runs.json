@@ -1,0 +1,68 @@
+[
+  {
+    "index": 0,
+    "role": "warm-up",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 46.629,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 1,
+    "role": "measured",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 35.001,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 2,
+    "role": "measured",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 32.081,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 3,
+    "role": "measured",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 44.79,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 4,
+    "role": "measured",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 31.333,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  },
+  {
+    "index": 5,
+    "role": "measured",
+    "pipeline": "PooledFrontier",
+    "durationSeconds": 29.879,
+    "peakWorkingSetBytes": 2505464688,
+    "peakLiveNodes": 0,
+    "outputTreeSha256": "B3B713CF53194228DEDB81E2E9541B98D30FD7BADAD1F1314F58885A73372549",
+    "success": true,
+    "failure": null
+  }
+]
