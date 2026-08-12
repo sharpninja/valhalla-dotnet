@@ -1,0 +1,4 @@
+WARNING: Command group 'account subscription' is experimental and under development. Reference and support levels: https://aka.ms/CLI_refstatus
+ERROR: (NotAllowed) Your subscription cannot be enabled since it has pending dues. Make required payments and retry
+Code: NotAllowed
+Message: Your subscription cannot be enabled since it has pending dues. Make required payments and retry

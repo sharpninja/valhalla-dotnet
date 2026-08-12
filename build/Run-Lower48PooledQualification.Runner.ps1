@@ -34,7 +34,9 @@ Get-PSDrive -PSProvider FileSystem | ForEach-Object {
 if (-not $PbfPath) {
   $candidates = @(
     (Join-Path $RepoRoot 'artifacts\us-lower48.osm.pbf'),
-    (Join-Path $RepoRoot 'artifacts\us-latest.osm.pbf')
+    (Join-Path $RepoRoot 'artifacts\us-latest.osm.pbf'),
+    'E:\valhalla-qual\pbf\us-lower48.osm.pbf',
+    'E:\valhalla-qual\pbf\us-latest.osm.pbf'
   )
   $PbfPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
