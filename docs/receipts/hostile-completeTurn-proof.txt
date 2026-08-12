@@ -1,0 +1,9 @@
+TimestampUtc: 20260812T222100Z
+SessionId: GrokCode-20260812T221858Z-hostile-amended-dod
+RequestId: req-20260812T221858Z-001-hostile-amended-dod-agree
+TurnStatus: completed
+Receipt: docs/hostile-validator-20260812T220524Z.md
+OverallVerdict: AGREE
+REST: GET /mcpserver/sessionlog/GrokCode/GrokCode-20260812T221858Z-hostile-amended-dod
+ProofJson: implementer/sessionlog-hostile-session-full.json
+ScratchProof: implementer/hostile-completeTurn-proof.txt

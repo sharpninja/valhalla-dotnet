@@ -58,7 +58,6 @@
     }
   ],
   "ExplicitFailList": [],
-  "OverallVerdict": "AGREE",
   "HostileReverifyRelease": {
     "Result": "Failed 0 Passed 380 Skipped 0",
     "Log": "docs/receipts/hostile-reverify-Release-20260812T220300Z.log",
@@ -71,5 +70,9 @@
     "Id": "PHASE-MJOLNIRFRONTIER-001",
     "DoneSummaryContainsAmendment": true,
     "Done": true
-  }
+  },
+  "SessionId": "GrokCode-20260812T221858Z-hostile-amended-dod",
+  "TurnRequestId": "req-20260812T221858Z-001-hostile-amended-dod-agree",
+  "TurnStatus": "completed",
+  "OverallVerdict": "AGREE"
 }

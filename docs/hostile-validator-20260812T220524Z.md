@@ -6,6 +6,10 @@
 - **Worktree:** F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier
 - **BranchTip:** `12386016aeabe0d9a254b411bb59f23bf6ccada9` (`codex/pooled-node-frontier`)
 - **Scope:** Amended DoD only (`AMD-MJOLNIRFRONTIER-001-L48-DEFER` ACTIVE). Formal L48 pass, 7-day promo, and CLI flip to PooledFrontier are deferred and not required.
+- **SessionId:** `GrokCode-20260812T221858Z-hostile-amended-dod`
+- **TurnRequestId:** `req-20260812T221858Z-001-hostile-amended-dod-agree`
+- **TurnStatus:** completed
+- **SessionLogProof:** GET /mcpserver/sessionlog/GrokCode/GrokCode-20260812T221858Z-hostile-amended-dod (turn status completed; response cites OverallVerdict AGREE)
 
 ## Claims reviewed
 
@@ -81,3 +85,10 @@
 **AGREE**
 
 All amended-phase claims C1-C10 independently re-verified PASS. Formal L48, 7-day promo, and CLI flip were not required under ACTIVE `AMD-MJOLNIRFRONTIER-001-L48-DEFER`.
+## MCP Session Log (completeTurn proof)
+- SessionId: `GrokCode-20260812T221858Z-hostile-amended-dod`
+- RequestId: `req-20260812T221858Z-001-hostile-amended-dod-agree`
+- Turn status: completed (server GET)
+- Response includes OverallVerdict AGREE and receipt path
+- Actions order 1-3 bind receipt md/json and PLAN-FINISH amendment decision
+- REST proof saved: docs/receipts/sessionlog-hostile-amended-dod-get.json

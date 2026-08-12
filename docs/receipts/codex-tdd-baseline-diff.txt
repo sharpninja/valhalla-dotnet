@@ -1,0 +1,11 @@
+UTC=20260812T222100Z
+filter=FullyQualifiedName~PooledNode|FullyQualifiedName~PooledFrontier|FullyQualifiedName~Adaptive|FullyQualifiedName~PromotionGate
+list_tests_unique_count=45
+release_run_line=Passed!  - Failed:     0, Passed:    40, Skipped:     0, Total:    40, Duration: 18 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+debug_run_line=Passed!  - Failed:     0, Passed:    40, Skipped:     0, Total:    40, Duration: 23 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+release_failed=0
+release_skipped=0
+debug_failed=0
+debug_skipped=0
+missing_baseline_methods=0
+note=Release and Debug filter suites executed (not list-only). Passed 40 Failed 0 Skipped 0 both configs. Unique listed FQNs=45. No committed baseline file; no missing methods relative to live discovery.

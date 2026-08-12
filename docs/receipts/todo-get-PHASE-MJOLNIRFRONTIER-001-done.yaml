@@ -1,7 +1,6 @@
-Failsafe queue drain: replayed=0 failed=1 quarantined=2 skipped=0 dir='F:\GitHub\TruckMate\.mcpServer\grok\failsafe'.
 type: result
 payload:
-  requestId: req-20260812T220902Z-021c
+  requestId: req-20260812T222208Z-881d
   result:
     id: PHASE-MJOLNIRFRONTIER-001
     title: Pooled Value-Type Node Frontier (BDPv4)
@@ -10,27 +9,24 @@ payload:
     done: true
     estimate: multi-week
     note: >
-      DONE under AMD-MJOLNIRFRONTIER-001-L48-DEFER. Formal L48 deferred. CLI Legacy. Tip 1238601.
+      DONE under AMD-MJOLNIRFRONTIER-001-L48-DEFER. Formal L48 deferred. CLI Legacy. Hostile session  turn completed. Tip 815cb26.
     description:
-    - 'Source plan: C:\Users\kingd\.codex\tmp\Pooled-Value-Type-Node-Frontier-Plan.md'
-    - 'Workspace plan: docs/PLAN-PHASE-MJOLNIRFRONTIER-001-Pooled-Value-Type-Node-Frontier.md'
-    - 'Finish plan: docs/PLAN-FINISH-PHASE-MJOLNIRFRONTIER-001.md'
-    - 'Audit: docs/AUDIT-PHASE-MJOLNIRFRONTIER-001-code-completeness.md'
-    - 'CODE LOCATION: SharpNinja.Valhalla.Generation on branch codex/pooled-node-frontier (13 commits ahead of main). Worktree: C:\Users\kingd\OneDrive\Documents\SharpNinja\valhalla-pooled-frontier @ 1d61909.'
-    - main does NOT contain PooledFrontier path (legacy ManagedRoadGraphBuilder only).
-    - 'Outcome: bounded pooled value-type node frontier pipeline; Official Valhalla remains deployed until qualification+rollout complete.'
+    - 'Finish plan: docs/PLAN-FINISH-PHASE-MJOLNIRFRONTIER-001.md with ACTIVE amendment AMD-MJOLNIRFRONTIER-001-L48-DEFER (operator APPROVE 2026-08-12).'
+    - 'Code: F:\GitHub\valhalla-dotnet branch codex/pooled-node-frontier worktree .worktrees/pooled-node-frontier; PR #1 merged origin/main @ 1fffa26 (PooledFrontier path present on main).'
+    - 'Lab policy: PAYTON-LEGION2 + PAYTON-DESKTOP via Octopus; GitHub origin; Azure not used.'
+    - 'Phase closed under amended DoD: formal L48 + 7-day promo + CLI flip deferred; CLI remains Legacy; Official Valhalla remains production.'
     technicalDetails:
-    - 'PRESENT on branch: ManagedRoadGraphPipeline Legacy|PooledFrontier; BuildPooledFrontierAsync; CompactOsmSemanticStore; NodeIncidenceIndex; StableGraphIdentityIndex; PooledNodeArena/NodeWorkItem/NodeHandle; PooledPathFrontier/WaySession; PooledRoadEdgeBuilder; DurableFrontierEdgeSink; BoundedRoadTileWriter; simple+complex restriction indexes; PooledRoadRestrictionStage; ValhallaGenerationFrontierMetrics; all 6 named PooledNodeFrontierTests methods.'
-    - 'TESTS: hostile re-run on dirty worktree frontier-ish Release filter Passed 126 / Failed 0 / Skipped 0 (supersedes earlier 115 filter count). Full clean-tip suite still required (F0).'
-    - 'PARTIAL: Gate 6 Stage G bounded enhance without dual in-memory generations; Gate 7 adaptive DOP fit-to-budget; consumer matrix residuals (plan 9).'
-    - 'MISSING: Gate 8 full DOP/hash/official parity matrix; Nashville 10 complete; Lower-48 11 complete (MCP Codex-20260811T142746Z-plugin-session still in_progress); merge to main; CLI default flip; controlled rollout 12; MCP checkpoints were stale until this update.'
-    - 'MCP sessions: Codex L48 pooled-nodes session in_progress; Codex official generator session related. Codex rollouts under ~/.codex/sessions/2026/08/10 and 08/11.'
+    - 'PRESENT on main and branch: ManagedRoadGraphPipeline Legacy|PooledFrontier; BuildPooledFrontierAsync; PooledNodeArena; PooledPathFrontier; PooledRoadEnhanceStage; AdaptiveGenerationParallelism; PromotionGateTests; L48 Runner + 7-day campaign + Promote CLI scripts.'
+    - 'TESTS (Generation.Tests tip): Debug+Release full suite Passed 380 Failed 0 Skipped 0. Codex/frontier filter Debug+Release Passed 40 Failed 0 Skipped 0. Gate filter Passed 46. Named: PooledNodeFrontierTests, PooledFrontierDeterminismMatrixTests, AdaptiveGenerationParallelismTests, PromotionGateTests, ManagedRoadGraphPipelineContractTests.'
+    - 'Nashville: docs/receipts/nashville-pooled-qualification-report.json status experimental-performance-win-memory-uninstrumented-official (12 runs).'
+    - 'L48: docs/receipts/l48-pooled-qualification-report.json status blocked-formal-capacity (fail-closed host bar); formal pass DEFERRED by AMD-MJOLNIRFRONTIER-001-L48-DEFER.'
+    - 'Hostile AGREE amended: docs/hostile-validator-20260812T220524Z.md OverallVerdict AGREE; SessionId GrokCode-20260812T221858Z-hostile-amended-dod; RequestId req-20260812T221858Z-001-hostile-amended-dod-agree turn completed.'
     implementationTasks:
     - task: 'Gate 0: Branch/worktree isolation (codex/pooled-node-frontier)'
       done: true
     - task: 'Gate 0 residual: Freeze baseline receipts + clean worktree tip + full suite on clean SHA'
       done: true
-    - task: 'Gate 1: RED/GREEN architecture and lifecycle tests'
+    - task: 'Gate 1: RED/GREEN architecture and lifecycle tests (PooledNodeFrontierTests)'
       done: true
     - task: 'Gate 2: Compact stores and incidence index'
       done: true
@@ -40,14 +36,33 @@ payload:
       done: true
     - task: 'Gate 5: Restrictions, controls, and cross-tile topology'
       done: true
-    - task: 'Gate 6: Bounded tile writing + Stage G pooled enhance'
+    - task: 'Gate 6: Bounded tile writing + Stage G pooled enhance (PooledRoadEnhanceStage)'
       done: true
-    - task: 'Gate 7: Adaptive resource scheduling'
+    - task: 'Gate 7: Adaptive resource scheduling (AdaptiveGenerationParallelismTests)'
       done: true
-    - task: 'Gate 8: Complete semantic and deterministic validation matrix'
+    - task: 'Gate 8: Determinism matrix (PooledFrontierDeterminismMatrixTests)'
       done: true
-    - task: Nashville qualification (plan 10) experimental report
+    - task: Nashville qualification experimental report
       done: true
-    - task: Lower-48 qualification (plan 11) formal 32/64/1TiB pass
+    - task: Lower-48 formal 32/64/1TiB pass (DEFERRED by AMD-MJOLNIRFRONTIER-001-L48-DEFER)
       done: false
-    - task: 'Merge to main (PR #1); CLI remains Legacy; formal L48 rollout DEFERRED by AMD-MJOLNIRFRONTIER-001-L48-DEFER'
+    - task: 'Merge PR #1 to main; CLI Legacy; rollout DEFERRED by amendment'
+      done: true
+    doneSummary: >
+      PHASE-MJOLNIRFRONTIER-001 closed under ACTIVE AMD-MJOLNIRFRONTIER-001-L48-DEFER (operator APPROVE). Evidence: Generation.Tests D+R 380/380; filter suites 40/40 D+R (PooledNode/PooledFrontier/Adaptive/PromotionGate); named tests PooledNodeFrontierTests, PooledFrontierDeterminismMatrixTests, AdaptiveGenerationParallelismTests, PromotionGateTests; Nashville experimental report present; L48 fail-closed blocked-formal-capacity; PR#1 main 1fffa26; CLI Legacy; hostile AGREE SessionId GrokCode-20260812T221858Z-hostile-amended-dod RequestId req-20260812T221858Z-001-hostile-amended-dod-agree. Formal L48/7-day/CLI flip deferred. Tip 815cb26.
+    remaining: >
+      Follow-on (deferred by amendment): formal L48 on 32/64/1TiB lab host; 7 daily stamps; CLI promote PooledFrontier; production replacement gates. Named future gates still open outside this phase.
+    dependsOn: []
+    functionalRequirements:
+    - FR-VALHALLA-016
+    - FR-VALHALLA-020
+    technicalRequirements:
+    - TR-VALHALLA-PERFORMANCE-051
+    - TR-VALHALLA-MEMORY-052
+    - TR-VALHALLA-DETERMINISM-053
+    - TR-VALHALLA-ASYNC-055
+    - TR-VALHALLA-SECURITY-059
+  deprecated: true
+
+---
+
