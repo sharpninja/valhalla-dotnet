@@ -1,0 +1,11 @@
+UTC=2026-08-12T20:37:58.4303763Z
+tip=446d0b5b7af11ccd577e6bacf803ac9c9fe9751d
+clean=clean
+release_log_tail=Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 35 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+debug_log_tail=Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 37 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
+l48_status=blocked-formal-capacity
+mcp_done=false (synced; L48+rollout tasks still false)
+cli=Legacy
+pr1=origin/main has 1fffa26
+hostile_full_dod=NOT AGREE (honesty only 20260812T200100Z)
+amendment_draft=docs/PLAN-AMENDMENT-DRAFT-AMD-MJOLNIRFRONTIER-001-L48-DEFER.md INACTIVE
