@@ -42,3 +42,7 @@ done remains false until formal-pass L48 + 7 daily stamps + CLI promote after st
 1. Pay/re-enable Azure subscription, then provision 32 vCPU / 64 GiB / >=1 TiB free disk VM and attach or copy us-lower48.osm.pbf
 2. Authenticate GCP (or provide another compliant host) with same bar + PBF
 3. Explicit plan amendment deferring formal L48 + 7-day promotion from PHASE-MJOLNIRFRONTIER-001 DoD (operator-written only)
+
+## PAYTON-DESKTOP
+Pingable but WinRM/SSH/admin-share unusable for capacity probe (receipt: f6-desktop-probe-latest.txt). Cannot use as unattended formal host without operator remoting credentials.
+

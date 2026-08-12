@@ -1,0 +1,11 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SharpNinja.Valhalla -> F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\src\SharpNinja.Valhalla\bin\Release\net10.0\SharpNinja.Valhalla.dll
+  SharpNinja.Valhalla.Generation -> F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\src\SharpNinja.Valhalla.Generation\bin\Release\net10.0\SharpNinja.Valhalla.Generation.dll
+  SharpNinja.Valhalla.Generation.Tool -> F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\src\SharpNinja.Valhalla.Generation.Tool\bin\Release\net10.0\valhalla-dotnet.dll
+  SharpNinja.Valhalla.Generation.Benchmarks -> F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\benchmarks\SharpNinja.Valhalla.Generation.Benchmarks\bin\Release\net10.0\SharpNinja.Valhalla.Generation.Benchmarks.dll
+  SharpNinja.Valhalla.Generation.Tests -> F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\tests\SharpNinja.Valhalla.Generation.Tests\bin\Release\net10.0\SharpNinja.Valhalla.Generation.Tests.dll
+Test run for F:\GitHub\valhalla-dotnet\.worktrees\pooled-node-frontier\tests\SharpNinja.Valhalla.Generation.Tests\bin\Release\net10.0\SharpNinja.Valhalla.Generation.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 22 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
