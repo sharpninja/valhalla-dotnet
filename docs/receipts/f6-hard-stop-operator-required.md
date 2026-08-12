@@ -1,7 +1,7 @@
 # F6 hard stop
 
-TimestampUtc: 20260812T204845Z
-Tip: 842de2cc302191449d57b9b4745efb292225dacc
+TimestampUtc: 20260812T205014Z
+Tip: 42774baa7f0531cceb3afa0f6bdc8143e5ec605e
 UNLOCK_OPEN: False
 
 Operator must pick one:

@@ -1,7 +1,7 @@
-# Verification plan 20260812T204845Z
+# Verification plan 20260812T205014Z
 
 ## 1 Full suites
-- HEAD: 842de2cc302191449d57b9b4745efb292225dacc clean
+- HEAD: 42774baa7f0531cceb3afa0f6bdc8143e5ec605e clean
 - Release: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 35 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 - Debug: Passed!  - Failed:     0, Passed:   380, Skipped:     0, Total:   380, Duration: 37 s - SharpNinja.Valhalla.Generation.Tests.dll (net10.0)
 
@@ -23,7 +23,7 @@
 - honesty AGREE only 20260812T200100Z
 - Full F0-F6 DoD: NOT AGREE
 
-## Unlock 20260812T204845Z
+## Unlock 20260812T205014Z
 - UNLOCK_OPEN=False
 - Azure NotAllowed pending dues + ReadOnlyDisabled
 - Local bar False; real_operator_approve False
