@@ -40,3 +40,6 @@ artifacts/repro-second/
 artifacts/qualification/**/tn-run-*/
 artifacts/qualification/**/run-*/
 artifacts/tennessee-latest.osm.pbf
+
+artifacts/nashville-metro.osm.pbf
+artifacts/tennessee-latest.osm.pbf

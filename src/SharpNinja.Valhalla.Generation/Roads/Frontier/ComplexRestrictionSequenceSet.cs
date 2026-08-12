@@ -286,6 +286,14 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
 
             IReadOnlyList<ulong> timeDomains =
                 ResolveTimeDomains(semanticStore, source, projection);
+            // Empty domains mean the conditional could not be projected; skip the
+            // restriction rather than aborting the entire extract (official
+            // Valhalla omits unparseable conditionals on production extracts).
+            if (timeDomains.Count == 0)
+            {
+                continue;
+            }
+
             RestrictionViaProjectionKind viaProjection =
                 projection.ViaWay
                     ? RestrictionViaProjectionKind.SourceWays
@@ -329,11 +337,12 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
         IReadOnlyDictionary<string, string> tags =
             semanticStore.ReadTags(source.TagReference);
         string condition;
-        if (tags.TryGetValue(
-                "restriction:conditional",
-                out string? explicitCondition))
+        bool explicitConditional = tags.TryGetValue(
+            "restriction:conditional",
+            out string? explicitCondition);
+        if (explicitConditional)
         {
-            condition = explicitCondition.Trim();
+            condition = explicitCondition!.Trim();
         }
         else
         {
@@ -382,7 +391,11 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
 
         if (string.IsNullOrWhiteSpace(condition))
         {
-            throw InvalidConditionalRestriction(source);
+            // Explicit modern conditionals that cannot be projected are skipped.
+            // Legacy day_on/hour_on forms still fail closed above.
+            return explicitConditional
+                ? Array.Empty<ulong>()
+                : throw InvalidConditionalRestriction(source);
         }
 
         var values = new List<ulong>();
@@ -392,6 +405,11 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
         {
             if (string.IsNullOrWhiteSpace(clause))
             {
+                if (explicitConditional)
+                {
+                    return Array.Empty<ulong>();
+                }
+
                 throw InvalidConditionalRestriction(source);
             }
 
@@ -403,15 +421,25 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
                     continue;
                 }
 
+                if (explicitConditional)
+                {
+                    return Array.Empty<ulong>();
+                }
+
                 throw InvalidConditionalRestriction(source);
             }
 
             values.AddRange(parsed);
         }
 
-        return values.Count == 0
-            ? throw InvalidConditionalRestriction(source)
-            : values;
+        if (values.Count == 0)
+        {
+            return explicitConditional
+                ? Array.Empty<ulong>()
+                : throw InvalidConditionalRestriction(source);
+        }
+
+        return values;
     }
 
     private static bool IsIgnoredAuxiliaryConditionalClause(string clause)
