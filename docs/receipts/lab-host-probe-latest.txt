@@ -1,0 +1,38 @@
+UTC=20260812T215006Z
+POLICY=Azure not used; hosts=PAYTON-LEGION2,PAYTON-DESKTOP; CI=Octopus; origin=GitHub; no GitHub Actions
+LEGION2 host=PAYTON-LEGION2 cpu=16 memGiB=23.37 freeDiskGiB=1259 bar32_64_1024=False
+PBF_us_lower48=True
+ping PAYTON-DESKTOP=True
+ping PAYTON-LEGION2=True
+DESKTOP_CIM_FAIL=WinRM cannot process the request. The following error with errorcode 0x8009030e occurred while using Negotiate authentication: A specified logon session does not exist. It may already have been terminated.  
+ Possible causes are:
+  -The user name or password specified are invalid.
+  -Kerberos is used when no authentication method and no user name are specified.
+  -Kerberos accepts domain user names, but not local user names.
+  -The Service Principal Name (SPN) for the remote computer name and port does not exist.
+  -The client and remote computers are in different domains and there is no trust between the two domains.
+ After checking for the above issues, try the following:
+  -Check the Event Viewer for events related to authentication.
+  -Change the authentication method; add the destination computer to the WinRM TrustedHosts configuration setting or use HTTPS transport.
+ Note that computers in the TrustedHosts list might not be authenticated.
+   -For more information about WinRM configuration, run the following command: winrm help config.
+DESKTOP_ICM_FAIL=Connecting to remote server PAYTON-DESKTOP failed with the following error message : WinRM cannot process the request. The following error with errorcode 0x8009030e occurred while using Negotiate authentication: A specified logon session does not exist. It may already have been terminated.  
+ Possible causes are:
+  -The user name or password specified are invalid.
+  -Kerberos is used when no authentication method and no user name are specified.
+  -Kerberos accepts domain user names, but not local user names.
+  -The Service Principal Name (SPN) for the remote computer name and port does not exist.
+  -The client and remote computers are in different domains and there is no trust between the two domains.
+ After checking for the above issues, try the following:
+  -Check the Event Viewer for events related to authentication.
+  -Change the authentication method; add the destination computer to the WinRM TrustedHosts configuration setting or use HTTPS transport.
+ Note that computers in the TrustedHosts list might not be authenticated.
+   -For more information about WinRM configuration, run the following command: winrm help config. For more information, see the about_Remote_Troubleshooting Help topic.
+DESKTOP_SSH_p22=ssh: connect to host 192.168.1.77 port 22: Connection timed out
+DESKTOP_SSH_p2222=kex_exchange_identification: read: Connection reset Connection reset by 192.168.1.77 port 2222
+share \\PAYTON-DESKTOP\C$=False
+share \\PAYTON-DESKTOP\D$=False
+share \\PAYTON-DESKTOP\E$=False
+Octopus_service_local=
+docker_cpus=CPUs: 16 Total Memory: 11.36GiB
+resolve_desktop=fe80::d16a:bf7:b6a:a2a0

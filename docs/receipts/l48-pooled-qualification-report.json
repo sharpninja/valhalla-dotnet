@@ -1,7 +1,7 @@
 {
   "campaign": "Lower48",
   "pipeline": "PooledFrontier",
-  "branchSha": "bd358bb5478b05cc73f6b12a34b4acffc45954f9",
+  "branchSha": "6ee5c4465971d3c365234fce2668b8a5f6e58e51",
   "pbfPath": "E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf",
   "pbfSha256": "A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3",
   "configPath": "benchmarks/config/lower48-3.8.3.json",
@@ -56,5 +56,5 @@
     "performanceRatioVsOfficial": null,
     "estimatedGcpCostUsd": null
   },
-  "notes": "Formal L48 refused on host bar only (PBF present). Azure ReadOnlyDisabledSubscription. GCP unauthenticated. Re-probed 2026-08-12T19:55Z."
+  "notes": "Formal L48 refused on host bar only (PBF present). Lab-only: PAYTON-LEGION2 16/23 fails 32/64/1024. PAYTON-DESKTOP not remotely measurable from LEGION2. Azure not used. Octopus+GitHub origin. Re-probed 20260812T215155Z."
 }

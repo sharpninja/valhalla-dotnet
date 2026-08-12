@@ -1,48 +1,41 @@
-# F6 formal L48 host blocker (updated)
+# F6 formal L48 host blocker (lab-only policy)
 
-TimestampUtc: 2026-08-12T19:55:00Z
+TimestampUtc: 20260812T215155Z
+Tip: 6ee5c4465971d3c365234fce2668b8a5f6e58e51
 
-## Host bar
-LocalHost: PAYTON-LEGION2 (16 vCPU / 23.37 GiB / max free disk 1259 GiB) fails formal bar 32 vCPU / 64 GiB / 1024 GiB free.
+## Lab topology (operator-stated 2026-08-12)
+- Deploy hosts: PAYTON-LEGION2 and PAYTON-DESKTOP only
+- Deploy orchestrator: Octopus
+- Source origin: GitHub
+- GitHub Actions: not used
+- Azure: not involved (do not provision Azure VMs or treat Azure as a host path)
 
-## Azure
-Subscription: Azure subscription 1 (f52f8b2f-8faa-4207-9adb-67fd64da9b8a)
-CLI state field: Warned
-Write actions: ReadOnlyDisabledSubscription (cannot create RG/VM; provider Microsoft.Compute NotRegistered)
-Receipt: docs/receipts/f6-azure-try-latest.txt
-Prior enable attempt: NotAllowed pending dues (see f6-azure-provision.log / f6-azure-retry)
+## Formal L48 bar
+32 vCPU / 64 GiB RAM / >=1024 GiB free disk + us-lower48.osm.pbf
 
-## GCP
-No credentialed accounts (gcloud auth list empty). Operator must gcloud auth login.
-
-## PBF (READY)
-E:\valhalla-qual\pbf\us-latest.osm.pbf = 12077262565 bytes
-E:\valhalla-qual\pbf\us-lower48.osm.pbf = hardlink/same content
-SHA256: A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3
-Pointer: artifacts/us-lower48.osm.pbf.pointer.txt
-
-## Formal runner fail-closed (re-run 2026-08-12T19:55Z)
-build/Run-Lower48PooledQualification.Runner.ps1 throws:
-  Formal L48 host bar not met: vCpu=16 memGiB=23 freeDiskGiB=1259 (need 32/64/1024)
-PromotionGateTests Release: Passed 4 / Failed 0 (docs/receipts/f6-promotion-tests.log)
-
-## Promotion
-Scripts ready on branch tip:
-- Run-Lower48PooledQualification.Runner.ps1
-- Run-PooledFrontierPromotionCampaign.ps1 (7 consecutive calendar days)
-- Promote-PooledFrontierCliDefault.ps1
-
-7 consecutive daily L48 builds cannot complete in a single session wall-clock
-without a formal L48 host. Calendar days are required by the promotion campaign.
-
-## MCP
-done remains false until formal-pass L48 + 7 daily stamps + CLI promote after stamp.
-
-## Operator paths to unblock full DoD
-1. Pay/re-enable Azure subscription, then provision 32 vCPU / 64 GiB / >=1 TiB free disk VM and attach or copy us-lower48.osm.pbf
-2. Authenticate GCP (or provide another compliant host) with same bar + PBF
-3. Explicit plan amendment deferring formal L48 + 7-day promotion from PHASE-MJOLNIRFRONTIER-001 DoD (operator-written only)
+## PAYTON-LEGION2 (this agent host)
+- cpu=16 memGiB=23.37 freeDiskGiB~1259
+- bar32_64_1024=False (CPU and RAM fail; disk alone would pass)
+- PBF READY: E:\valhalla-qual\pbf\us-lower48.osm.pbf (12077262565 B, sha256 A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3)
+- Docker: CPUs 16 / Total Memory 11.36 GiB (also under bar)
 
 ## PAYTON-DESKTOP
-Pingable but WinRM/SSH/admin-share unusable for capacity probe (receipt: f6-desktop-probe-latest.txt). Cannot use as unattended formal host without operator remoting credentials.
+- Ping: True (192.168.1.77)
+- WinRM/CIM/Invoke-Command: fail (0x8009030e Negotiate / logon session)
+- SSH 22: timeout; SSH 2222: connection reset
+- Admin shares C$/D$/E$: False
+- Cannot measure CPU/RAM/disk or start formal L48 from LEGION2 without operator remoting fix or local run on DESKTOP
 
+## Scripts ready (lab host with bar met)
+- build/Run-Lower48PooledQualification.Runner.ps1
+- build/Run-PooledFrontierPromotionCampaign.ps1
+- build/Promote-PooledFrontierCliDefault.ps1
+- build/Complete-F6FormalHostChain.ps1
+
+## Operator unlock paths (Azure removed)
+1. On a lab host that meets 32/64/1024 (likely PAYTON-DESKTOP if it qualifies): run formal L48 chain with staged PBF (copy or share E:\valhalla-qual\pbf if needed)
+2. Enable agent remoting from LEGION2 to DESKTOP (WinRM TrustedHosts + credentials, or working SSH) so agent can measure and run formal L48 there
+3. Reply exactly: APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER to defer formal L48 + 7-day promo from phase DoD (CLI stays Legacy)
+
+## MCP
+done remains false until formal-pass L48 + 7 daily stamps + CLI promote after stamp, or approved amendment.
