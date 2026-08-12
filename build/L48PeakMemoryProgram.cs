@@ -12,6 +12,7 @@ var outJson = args[3];
 var memBudget = long.Parse(args[4]);
 var scratchBudget = long.Parse(args[5]);
 var dop = int.Parse(args[6]);
+var heartbeatSeconds = args.Length > 7 && int.TryParse(args[7], out var hb) && hb > 0 ? hb : 10;
 
 static void TryDelete(string path)
 {
@@ -25,8 +26,82 @@ static void TryDelete(string path)
         catch (IOException) when (attempt < 4) { Thread.Sleep(500); }
         catch (UnauthorizedAccessException) when (attempt < 4) { Thread.Sleep(500); }
     }
-    // Fall back to unique suffix if still locked.
 }
+
+static long DirectorySizeBytes(string root)
+{
+    if (!Directory.Exists(root)) return 0;
+    long total = 0;
+    try
+    {
+        foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            try { total += new FileInfo(f).Length; } catch { }
+        }
+    }
+    catch { }
+    return total;
+}
+
+static string InferStage(string workDir, string tilesDir)
+{
+    // Prefer the most "advanced" stage folder present (order matters).
+    string[][] stages =
+    [
+        ["tile", "tiles", "bounded-tiles", "tile-write", "graph-tiles"],
+        ["restriction", "restrictions", "pooled-restriction"],
+        ["enhance", "enhancer", "pooled-enhance"],
+        ["frontier", "pooled-frontier", "path-frontier", "graph-build"],
+        ["pooled-semantic", "semantic", "canonical-metadata", "canonical-way-nodes", "node-incidence"],
+        ["osm-intermediate", "osm-nodes", "osm-ways", "osm-relations", "pbf", "ingest"],
+    ];
+    string[] labels =
+    [
+        "tile-write",
+        "restrictions",
+        "enhance",
+        "graph-frontier",
+        "semantic",
+        "pbf-ingestion",
+    ];
+
+    var dirs = new List<string>();
+    void Collect(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        try
+        {
+            foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+                dirs.Add(d);
+            dirs.Add(root);
+        }
+        catch { }
+    }
+    Collect(workDir);
+    Collect(tilesDir);
+
+    if (Directory.Exists(tilesDir))
+    {
+        try
+        {
+            if (Directory.EnumerateFiles(tilesDir, "*", SearchOption.AllDirectories).Any())
+                return "tile-write";
+        }
+        catch { }
+    }
+
+    for (var i = 0; i < stages.Length; i++)
+    {
+        foreach (var marker in stages[i])
+        {
+            if (dirs.Any(d => d.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+                return labels[i];
+        }
+    }
+
+    return Directory.Exists(workDir) ? "startup-or-idle" : "starting";
+}
+
 TryDelete(work);
 TryDelete(tiles);
 if (Directory.Exists(work) || Directory.Exists(tiles))
@@ -52,19 +127,47 @@ long hwmMem = 0;
 long hwmScratch = 0;
 object? resource = null;
 
+Console.WriteLine($"HEARTBEAT_CONFIG intervalSec={heartbeatSeconds} work={work} tiles={tiles} dop={dop} memBudgetBytes={memBudget}");
+Console.Out.Flush();
+
 using var cts = new CancellationTokenSource();
 var sampler = Task.Run(async () =>
 {
+    var nextHeartbeat = TimeSpan.Zero;
     while (!cts.IsCancellationRequested)
     {
         try
         {
             proc.Refresh();
+            // Peak measurement path unchanged: continuous high-water tracking.
             peakWs = Math.Max(peakWs, proc.PeakWorkingSet64);
             peakPrivate = Math.Max(peakPrivate, proc.PrivateMemorySize64);
             peakGc = Math.Max(peakGc, GC.GetTotalMemory(false));
+
+            if (sw.Elapsed >= nextHeartbeat)
+            {
+                var stage = InferStage(work, tiles);
+                var curWs = proc.WorkingSet64;
+                var workBytes = DirectorySizeBytes(work);
+                var tilesBytes = DirectorySizeBytes(tiles);
+                var diskBytes = workBytes + tilesBytes;
+                Console.WriteLine(
+                    "HEARTBEAT " +
+                    $"elapsedSec={sw.Elapsed.TotalSeconds:F1} " +
+                    $"stage={stage} " +
+                    $"wsGiB={curWs / (1024.0 * 1024 * 1024):F3} " +
+                    $"peakWsGiB={peakWs / (1024.0 * 1024 * 1024):F3} " +
+                    $"privateGiB={proc.PrivateMemorySize64 / (1024.0 * 1024 * 1024):F3} " +
+                    $"gcGiB={peakGc / (1024.0 * 1024 * 1024):F3} " +
+                    $"diskGiB={diskBytes / (1024.0 * 1024 * 1024):F3} " +
+                    $"workGiB={workBytes / (1024.0 * 1024 * 1024):F3} " +
+                    $"tilesGiB={tilesBytes / (1024.0 * 1024 * 1024):F3}");
+                Console.Out.Flush();
+                nextHeartbeat = sw.Elapsed + TimeSpan.FromSeconds(heartbeatSeconds);
+            }
         }
         catch { }
+
         try { await Task.Delay(250, cts.Token); } catch { break; }
     }
 });
