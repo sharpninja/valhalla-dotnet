@@ -74,6 +74,28 @@ public sealed class ValhallaGenerationCliContractTests : IDisposable
     }
 
     [Fact]
+    public void BuildTiles_ResolvesPooledPipelineAndTimeZoneDatabaseOptions()
+    {
+        ValhallaGenerationInvocation invocation =
+            ValhallaGenerationCli.ResolveInvocation(
+            [
+                "build-tiles",
+                "--pbf",
+                "region.osm.pbf",
+                "--output",
+                "tiles",
+                "--road-pipeline",
+                "PooledFrontier",
+                "--timezone-database",
+                "timezones.sqlite",
+                "--dry-run",
+            ]);
+
+        Assert.Equal(["PooledFrontier"], invocation.Options["road-pipeline"]);
+        Assert.Equal(["timezones.sqlite"], invocation.Options["timezone-database"]);
+    }
+
+    [Fact]
     public async Task InvalidConfiguration_FailsBeforeMutation()
     {
         Directory.CreateDirectory(scratch);

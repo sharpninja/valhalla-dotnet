@@ -284,32 +284,29 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
                 continue;
             }
 
-            if (projection.Conditional)
-            {
-                throw new InvalidDataException(
-                    $"OSM relation {source.OsmRelationId} contains a " +
-                    "conditional restriction, but pooled generation cannot " +
-                    "publish conditional restrictions until the official " +
-                    "time-domain parser and runtime evaluator are available.");
-            }
-
+            IReadOnlyList<ulong> timeDomains =
+                ResolveTimeDomains(semanticStore, source, projection);
             RestrictionViaProjectionKind viaProjection =
                 projection.ViaWay
                     ? RestrictionViaProjectionKind.SourceWays
                     : RestrictionViaProjectionKind.ToWaySentinel;
             int viaCount = projection.ViaWay ? source.ViaCount : 1;
-            forward.Append(
-                new ComplexRestrictionProjectionRecord(
-                    checked((ulong)source.FromWayId),
-                    checked((ulong)source.ToWayId),
-                    source.ViaOffset,
-                    viaCount,
-                    viaProjection,
-                    projection.Type,
-                    projection.Modes,
-                    projection.Probability,
-                    TimeDomain: 0,
-                    source.CanonicalOrdinal));
+            foreach (ulong timeDomain in timeDomains)
+            {
+                forward.Append(
+                    new ComplexRestrictionProjectionRecord(
+                        checked((ulong)source.FromWayId),
+                        checked((ulong)source.ToWayId),
+                        source.ViaOffset,
+                        viaCount,
+                        viaProjection,
+                        projection.Type,
+                        projection.Modes,
+                        projection.Probability,
+                        timeDomain,
+                        source.CanonicalOrdinal));
+            }
+
             reverse.Append(
                 new ReverseRestrictionProjectionRecord(
                     checked((ulong)source.ToWayId),
@@ -318,6 +315,117 @@ internal sealed class ComplexRestrictionSequenceSet : IDisposable
                     source.CanonicalOrdinal));
         }
     }
+
+    private static IReadOnlyList<ulong> ResolveTimeDomains(
+        CompactOsmSemanticStore semanticStore,
+        GenerationRestrictionRecord source,
+        ComplexRestrictionSemanticProjection projection)
+    {
+        if (!projection.Conditional)
+        {
+            return [0UL];
+        }
+
+        IReadOnlyDictionary<string, string> tags =
+            semanticStore.ReadTags(source.TagReference);
+        string condition;
+        if (tags.TryGetValue(
+                "restriction:conditional",
+                out string? explicitCondition))
+        {
+            condition = explicitCondition.Trim();
+        }
+        else
+        {
+            tags.TryGetValue("day_on", out string? dayOn);
+            tags.TryGetValue("day_off", out string? dayOff);
+            tags.TryGetValue("hour_on", out string? hourOn);
+            tags.TryGetValue("hour_off", out string? hourOff);
+            bool hasDay = !string.IsNullOrWhiteSpace(dayOn) ||
+                          !string.IsNullOrWhiteSpace(dayOff);
+            bool hasHour = !string.IsNullOrWhiteSpace(hourOn) ||
+                           !string.IsNullOrWhiteSpace(hourOff);
+            if ((hasDay &&
+                 (string.IsNullOrWhiteSpace(dayOn) ||
+                  string.IsNullOrWhiteSpace(dayOff))) ||
+                (hasHour &&
+                 (string.IsNullOrWhiteSpace(hourOn) ||
+                  string.IsNullOrWhiteSpace(hourOff))))
+            {
+                throw InvalidConditionalRestriction(source);
+            }
+
+            string dayRange = hasDay ? $"{dayOn!.Trim()}-{dayOff!.Trim()}" : string.Empty;
+            string hourRanges = string.Empty;
+            if (hasHour)
+            {
+                string[] starts = hourOn!.Split(';', StringSplitOptions.TrimEntries);
+                string[] ends = hourOff!.Split(';', StringSplitOptions.TrimEntries);
+                if (starts.Length == 0 ||
+                    starts.Length != ends.Length ||
+                    starts.Any(string.IsNullOrWhiteSpace) ||
+                    ends.Any(string.IsNullOrWhiteSpace))
+                {
+                    throw InvalidConditionalRestriction(source);
+                }
+
+                hourRanges = string.Join(
+                    ',',
+                    starts.Zip(ends, static (start, end) => $"{start}-{end}"));
+            }
+
+            condition = string.Join(
+                ' ',
+                new[] { dayRange, hourRanges }
+                    .Where(static value => !string.IsNullOrWhiteSpace(value)));
+        }
+
+        if (string.IsNullOrWhiteSpace(condition))
+        {
+            throw InvalidConditionalRestriction(source);
+        }
+
+        var values = new List<ulong>();
+        foreach (string clause in condition.Split(
+                     ';',
+                     StringSplitOptions.TrimEntries))
+        {
+            if (string.IsNullOrWhiteSpace(clause))
+            {
+                throw InvalidConditionalRestriction(source);
+            }
+
+            IReadOnlyList<ulong> parsed = ValhallaTimeDomainParser.Parse(clause);
+            if (parsed.Count == 0)
+            {
+                if (IsIgnoredAuxiliaryConditionalClause(clause))
+                {
+                    continue;
+                }
+
+                throw InvalidConditionalRestriction(source);
+            }
+
+            values.AddRange(parsed);
+        }
+
+        return values.Count == 0
+            ? throw InvalidConditionalRestriction(source)
+            : values;
+    }
+
+    private static bool IsIgnoredAuxiliaryConditionalClause(string clause)
+    {
+        string trimmed = clause.TrimStart();
+        return trimmed.StartsWith("PH", StringComparison.Ordinal) ||
+               trimmed.StartsWith("SH", StringComparison.Ordinal);
+    }
+
+    private static InvalidDataException InvalidConditionalRestriction(
+        GenerationRestrictionRecord source) =>
+        new(
+            $"OSM relation {source.OsmRelationId} contains an invalid or " +
+            "unsupported conditional restriction.");
 
     private static int CompareForward(
         CompactOsmSemanticStore semanticStore,

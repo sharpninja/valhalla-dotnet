@@ -60,8 +60,14 @@ public sealed class ComplexRestrictionMarkerIndexTests
         Assert.Equal(0U, end.StartModes);
         Assert.Equal(DefaultRestrictionModes, end.EndModes);
         Assert.True(end.PartOfComplexRestriction);
-        Assert.True(AssertMarker(index, fromReverse).PartOfComplexRestriction);
-        Assert.True(AssertMarker(index, toReverse).PartOfComplexRestriction);
+        ComplexRestrictionEdgeMarker reverseStart =
+            AssertMarker(index, fromReverse);
+        ComplexRestrictionEdgeMarker reverseEnd =
+            AssertMarker(index, toReverse);
+        Assert.Equal(DefaultRestrictionModes, reverseStart.StartModes);
+        Assert.Equal(DefaultRestrictionModes, reverseEnd.EndModes);
+        Assert.True(reverseStart.PartOfComplexRestriction);
+        Assert.True(reverseEnd.PartOfComplexRestriction);
         Assert.True(AssertMarker(index, viaForward).PartOfComplexRestriction);
         Assert.True(AssertMarker(index, viaReverse).PartOfComplexRestriction);
     }
@@ -86,8 +92,14 @@ public sealed class ComplexRestrictionMarkerIndexTests
         Assert.Equal((uint)GraphConstants.TruckAccess, end.EndModes);
         Assert.True(start.PartOfComplexRestriction);
         Assert.True(end.PartOfComplexRestriction);
-        Assert.True(AssertMarker(index, fromReverse).PartOfComplexRestriction);
-        Assert.True(AssertMarker(index, toReverse).PartOfComplexRestriction);
+        ComplexRestrictionEdgeMarker reverseStart =
+            AssertMarker(index, fromReverse);
+        ComplexRestrictionEdgeMarker reverseEnd =
+            AssertMarker(index, toReverse);
+        Assert.Equal((uint)GraphConstants.TruckAccess, reverseStart.StartModes);
+        Assert.Equal((uint)GraphConstants.TruckAccess, reverseEnd.EndModes);
+        Assert.True(reverseStart.PartOfComplexRestriction);
+        Assert.True(reverseEnd.PartOfComplexRestriction);
     }
 
     [Fact]
@@ -108,12 +120,10 @@ public sealed class ComplexRestrictionMarkerIndexTests
 
         Assert.Equal(DefaultRestrictionModes, start.StartModes);
         Assert.False(start.PartOfComplexRestriction);
-        Assert.False(
-            index.TryGetMarker(
-                fromReverse.StartNode,
-                fromReverse.EdgeRecordId,
-                fromReverse.Forward,
-                out _));
+        ComplexRestrictionEdgeMarker reverseStart =
+            AssertMarker(index, fromReverse);
+        Assert.Equal(DefaultRestrictionModes, reverseStart.StartModes);
+        Assert.False(reverseStart.PartOfComplexRestriction);
         Assert.Equal(DefaultRestrictionModes, end.EndModes);
         Assert.True(end.PartOfComplexRestriction);
         Assert.True(AssertMarker(index, toReverse).PartOfComplexRestriction);

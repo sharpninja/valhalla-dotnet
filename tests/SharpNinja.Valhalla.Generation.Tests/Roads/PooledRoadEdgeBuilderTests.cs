@@ -25,7 +25,10 @@ public sealed class PooledRoadEdgeBuilderTests
             using PooledRoadEdgeBuildResult result =
                 await PooledRoadEdgeBuilder.BuildAsync(
                     semanticStore,
-                    BuilderOptions(Path.Combine(root, "pooled")),
+                    BuilderOptions(Path.Combine(root, "pooled")) with
+                    {
+                        ArenaSlabCapacity = 1,
+                    },
                     TestContext.Current.CancellationToken);
 
             Assert.Equal(3, result.EdgeCount);
@@ -34,7 +37,21 @@ public sealed class PooledRoadEdgeBuilderTests
             Assert.Equal(2, result.FrontierMetrics.SecondaryNodesProcessed);
             Assert.Equal(2, result.FrontierMetrics.SecondarySlotsReleased);
             Assert.True(result.FrontierMetrics.PeakLiveSlots <= 3);
+            Assert.True(result.FrontierMetrics.TotalSlabsRented > 1);
             Assert.Equal(0, result.FrontierMetrics.StaleHandleRejections);
+            Assert.Equal(
+                new[]
+                {
+                    result.ResourceMetrics.NodeLookupPhasePeakMemoryBytes,
+                    result.ResourceMetrics.CandidatePhasePeakMemoryBytes,
+                    result.ResourceMetrics.IdentityPhasePeakMemoryBytes,
+                    result.ResourceMetrics.FrontierPhasePeakMemoryBytes,
+                    result.ResourceMetrics.GraphNodePhasePeakMemoryBytes,
+                }.Max(),
+                result.PeakAggregateMemoryBytes);
+            Assert.True(
+                result.ResourceMetrics.FrontierPhasePeakMemoryBytes >=
+                result.FrontierMetrics.PeakSlabBytes);
 
             GenerationEdgeRecord first = result.ReadEdge(0);
             GenerationEdgeRecord second = result.ReadEdge(1);
@@ -71,6 +88,35 @@ public sealed class PooledRoadEdgeBuilderTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task BuildAsync_RelationOnlyNodeDoesNotCreateOrphanGraphIdentity()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new RelationOnlyNodeSource(),
+                    SemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using PooledRoadEdgeBuildResult result =
+                await PooledRoadEdgeBuilder.BuildAsync(
+                    semanticStore,
+                    BuilderOptions(Path.Combine(root, "pooled")),
+                    TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, result.EdgeCount);
+            Assert.Equal(2, result.GraphNodeCount);
+            Assert.Equal(2, result.IdentityCount);
+            Assert.False(result.TryGetGraphId(99, out _));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
 
     [Fact]
     public async Task BuildAsync_MissingReferencedNodeFailsBeforeEdgePublication()
@@ -188,6 +234,43 @@ public sealed class PooledRoadEdgeBuilderTests
             }
         }
     }
+    private sealed class RelationOnlyNodeSource : IOsmPbfEntitySource
+    {
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pass == OsmPbfEntityPass.Ways)
+            {
+                visitor.Way(20, [1UL, 2UL], RoadTags());
+                return;
+            }
+
+            if (pass == OsmPbfEntityPass.Relations)
+            {
+                visitor.Relation(
+                    30,
+                    [new OsmRelationMember(99, OsmMemberType.Node, "label")],
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["type"] = "site",
+                    });
+                return;
+            }
+
+            visitor.Node(1, 36.10, -86.70, EmptyTags());
+            visitor.Node(2, 36.11, -86.71, EmptyTags());
+            visitor.Node(99, 36.12, -86.72, EmptyTags());
+        }
+    }
+
+
 
     private sealed class MissingNodeSource : IOsmPbfEntitySource
     {

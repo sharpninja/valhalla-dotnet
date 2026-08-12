@@ -21,9 +21,20 @@ public static class GraphTileChecksum
         Span<byte> digest = stackalloc byte[MD5.HashSizeInBytes];
         MD5.HashData(tileBody, digest);
 
+        return FoldMd5Digest(digest);
+    }
+
+    internal static ulong FoldMd5Digest(ReadOnlySpan<byte> digest)
+    {
+        if (digest.Length != MD5.HashSizeInBytes)
+        {
+            throw new ArgumentException(
+                $"MD5 digest must be {MD5.HashSizeInBytes} bytes.",
+                nameof(digest));
+        }
+
         ulong lo = BinaryPrimitives.ReadUInt64BigEndian(digest[..8]);
         ulong hi = BinaryPrimitives.ReadUInt64BigEndian(digest[8..]);
-
         ulong folded = unchecked(
             lo ^ (hi + FoldConstant + (lo << 12) + (lo >> 4)));
         return folded & GraphTileHeader.TileHashMask;

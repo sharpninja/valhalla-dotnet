@@ -56,6 +56,83 @@ internal sealed class CompactOsmSemanticStore : IDisposable
         this.incidenceIndex = incidenceIndex;
     }
 
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodes.State.CurrentMemoryBytes +
+                ways.State.CurrentMemoryBytes +
+                wayNodeReferences.State.CurrentMemoryBytes +
+                relations.State.CurrentMemoryBytes +
+                relationMembers.State.CurrentMemoryBytes +
+                restrictions.State.CurrentMemoryBytes +
+                restrictionVias.State.CurrentMemoryBytes +
+                incidenceInput.State.CurrentMemoryBytes +
+                metadata.CurrentMemoryBytes +
+                incidenceIndex.CurrentMemoryBytes);
+        }
+    }
+
+    internal long PeakMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodes.State.PeakMemoryBytes +
+                ways.State.PeakMemoryBytes +
+                wayNodeReferences.State.PeakMemoryBytes +
+                relations.State.PeakMemoryBytes +
+                relationMembers.State.PeakMemoryBytes +
+                restrictions.State.PeakMemoryBytes +
+                restrictionVias.State.PeakMemoryBytes +
+                incidenceInput.State.PeakMemoryBytes +
+                metadata.PeakMemoryBytes +
+                incidenceIndex.PeakMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodes.State.CurrentScratchBytes +
+                ways.State.CurrentScratchBytes +
+                wayNodeReferences.State.CurrentScratchBytes +
+                relations.State.CurrentScratchBytes +
+                relationMembers.State.CurrentScratchBytes +
+                restrictions.State.CurrentScratchBytes +
+                restrictionVias.State.CurrentScratchBytes +
+                incidenceInput.State.CurrentScratchBytes +
+                metadata.CurrentScratchBytes +
+                incidenceIndex.CurrentScratchBytes);
+        }
+    }
+
+    internal long ScratchHighWaterMarkBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodes.State.ScratchHighWaterMarkBytes +
+                ways.State.ScratchHighWaterMarkBytes +
+                wayNodeReferences.State.ScratchHighWaterMarkBytes +
+                relations.State.ScratchHighWaterMarkBytes +
+                relationMembers.State.ScratchHighWaterMarkBytes +
+                restrictions.State.ScratchHighWaterMarkBytes +
+                restrictionVias.State.ScratchHighWaterMarkBytes +
+                incidenceInput.State.ScratchHighWaterMarkBytes +
+                metadata.ScratchHighWaterMarkBytes +
+                incidenceIndex.ScratchHighWaterMarkBytes);
+        }
+    }
+
+
     internal long NodeCount => ReadCount(nodes);
 
     internal long WayCount => ReadCount(ways);
@@ -929,6 +1006,43 @@ internal sealed class CompactOsmMetadataStore : IDisposable
         store = new IntermediateBlobStore(options);
         this.maximumPayloadBytes = checked((int)Math.Min(maximumPayloadBytes, int.MaxValue));
     }
+
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return store.State.CurrentMemoryBytes;
+        }
+    }
+
+    internal long PeakMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return store.State.PeakMemoryBytes;
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return store.State.CurrentScratchBytes;
+        }
+    }
+
+    internal long ScratchHighWaterMarkBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return store.State.ScratchHighWaterMarkBytes;
+        }
+    }
+
 
     internal long AppendTags(IReadOnlyDictionary<string, string> tags)
     {

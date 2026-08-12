@@ -28,7 +28,39 @@ internal sealed class NodeEdgeIncidenceIndex : IDisposable
         this.sorted = sorted;
         this.graphNodes = graphNodes;
         GraphNodeManifest = graphNodeManifest;
+        PeakMemoryBytes = checked(
+            input.State.PeakMemoryBytes +
+            sorted.Receipt.PeakMemoryBytes +
+            sorted.Output.State.PeakMemoryBytes +
+            graphNodes.State.PeakMemoryBytes);
     }
+
+    internal long PeakMemoryBytes { get; }
+
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                input.State.CurrentMemoryBytes +
+                sorted.Output.State.CurrentMemoryBytes +
+                graphNodes.State.CurrentMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                input.State.CurrentScratchBytes +
+                sorted.Output.State.CurrentScratchBytes +
+                graphNodes.State.CurrentScratchBytes);
+        }
+    }
+
 
     internal long IncidenceCount
     {
@@ -91,7 +123,11 @@ internal sealed class NodeEdgeIncidenceIndex : IDisposable
         {
             long middle = low + ((high - low) / 2);
             GenerationGraphNodeRecord candidate = graphNodes.Read(middle);
-            if (candidate.NodeId < nodeId)
+            int comparison =
+                NodeEdgeIncidenceOrdering.CompareGraphIds(
+                    candidate.NodeId,
+                    nodeId);
+            if (comparison < 0)
             {
                 low = middle + 1;
             }

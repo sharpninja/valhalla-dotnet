@@ -11,12 +11,18 @@ namespace SharpNinja.Valhalla.Generation.Roads.Frontier;
 internal sealed record BoundedRoadTileWriterOptions(
     string OutputDirectory,
     long MemoryBudgetBytes,
-    int MaxDegreeOfParallelism);
+    int MaxDegreeOfParallelism)
+{
+    internal string? TimeZoneDatabasePath { get; init; }
+}
 
 internal sealed record BoundedRoadTileWriteReceipt(
     int TileCount,
     int PeakActiveTileBuilders,
-    long PeakWorkerMemoryBytes);
+    long PeakWorkerMemoryBytes)
+{
+    internal long OutputScratchBytes { get; init; }
+}
 
 internal static class BoundedRoadTileWriter
 {
@@ -48,10 +54,13 @@ internal static class BoundedRoadTileWriter
         SimpleRestrictionMaskIndex? restrictionIndex = null;
         ComplexRestrictionMarkerIndex? complexRestrictionIndex = null;
         BoundedRoadTileWriteReceipt? receipt = null;
+        RoadTimeZoneResolver? timeZoneResolver = null;
         Exception? operationFailure = null;
         Exception? cleanupFailure = null;
         try
         {
+            timeZoneResolver = RoadTimeZoneResolver.Open(
+                options.TimeZoneDatabasePath);
             if (semanticStore.RestrictionCount > 0)
             {
                 if (options.MemoryBudgetBytes < 16)
@@ -127,6 +136,7 @@ internal static class BoundedRoadTileWriter
                     graph,
                     restrictionIndex,
                     complexRestrictionIndex,
+                    timeZoneResolver,
                     identityOrdinal,
                     tileEnd,
                     tileBase,
@@ -139,10 +149,31 @@ internal static class BoundedRoadTileWriter
                 identityOrdinal = tileEnd;
             }
 
+            if (tileCount > 0)
+            {
+                BoundedRestrictionTileCatalog tileCatalog =
+                    BoundedRestrictionTileCatalog.Build(
+                        fullOutputDirectory,
+                        tileCount);
+                long restampHashMemoryBytes =
+                    BoundedTilesetRestamper.GetHashReservationBytes(
+                        tileCount);
+                _ = BoundedTilesetRestamper.Restamp(
+                    fullOutputDirectory,
+                    tileCatalog,
+                    cancellationToken,
+                    hashMemoryBudgetBytes:
+                        restampHashMemoryBytes);
+            }
+
             receipt = new BoundedRoadTileWriteReceipt(
                 tileCount,
                 tileCount == 0 ? 0 : 1,
-                peakWorkerMemoryBytes);
+                peakWorkerMemoryBytes)
+            {
+                OutputScratchBytes =
+                    MeasureDirectoryBytes(fullOutputDirectory),
+            };
         }
         catch (Exception exception)
         {
@@ -151,6 +182,7 @@ internal static class BoundedRoadTileWriter
         finally
         {
             cleanupFailure = ExecuteCleanupActions(
+                () => timeZoneResolver?.Dispose(),
                 () => complexRestrictionIndex?.Dispose(),
                 () => restrictionIndex?.Dispose(),
                 () => DeleteDirectoryIfPresent(complexRestrictionWorkDirectory),
@@ -219,6 +251,7 @@ internal static class BoundedRoadTileWriter
         PooledRoadEdgeBuildResult graph,
         SimpleRestrictionMaskIndex? restrictionIndex,
         ComplexRestrictionMarkerIndex? complexRestrictionIndex,
+        RoadTimeZoneResolver timeZoneResolver,
         long startIdentityOrdinal,
         long endIdentityOrdinal,
         GraphId tileBase,
@@ -252,8 +285,13 @@ internal static class BoundedRoadTileWriter
 
             if (!graph.TryGetGraphNode(identity.GraphId, out GenerationGraphNodeRecord graphNode))
             {
+                semanticStore.TryFindIncidenceSummary(
+                    identity.OsmNodeId,
+                    out NodeIncidenceSummary summary);
                 throw new InvalidDataException(
-                    $"Graph node {identity.GraphId} has no incident-edge range.");
+                    $"Graph node {identity.GraphId} for OSM node " +
+                    $"{identity.OsmNodeId} has no incident-edge range; " +
+                    $"anchor flags: {summary.AnchorFlags}.");
             }
 
             uint nodeAccess = 0;
@@ -386,6 +424,7 @@ internal static class BoundedRoadTileWriter
                 taggedAccess: false,
                 privateAccess: false,
                 cashOnlyToll: false);
+            nodeInfo.SetTimezone(timeZoneResolver.Resolve(ToPoint(node)));
             nodeInfo.SetEdgeIndex(firstDirectedEdgeIndex);
             nodeInfo.SetEdgeCount(checked((uint)graphNode.IncidentEdgeCount));
             nodeInfo.SetLocalEdgeCount(checked((uint)graphNode.IncidentEdgeCount));
@@ -459,8 +498,13 @@ internal static class BoundedRoadTileWriter
             StableGraphNodeIdentity identity = graph.ReadIdentity(identityOrdinal);
             if (!graph.TryGetGraphNode(identity.GraphId, out GenerationGraphNodeRecord graphNode))
             {
+                semanticStore.TryFindIncidenceSummary(
+                    identity.OsmNodeId,
+                    out NodeIncidenceSummary summary);
                 throw new InvalidDataException(
-                    $"Graph node {identity.GraphId} has no incident-edge range.");
+                    $"Graph node {identity.GraphId} for OSM node " +
+                    $"{identity.OsmNodeId} has no incident-edge range; " +
+                    $"anchor flags: {summary.AnchorFlags}.");
             }
 
             bytes = checked(bytes + Unsafe.SizeOf<NodeInfo>());
@@ -551,6 +595,21 @@ internal static class BoundedRoadTileWriter
         PointLL.Create(
             node.LongitudeE7 / 10_000_000d,
             node.LatitudeE7 / 10_000_000d);
+
+    private static long MeasureDirectoryBytes(string directory)
+    {
+        long totalBytes = 0;
+        foreach (string path in Directory.EnumerateFiles(
+                     directory,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            totalBytes = checked(totalBytes + new FileInfo(path).Length);
+        }
+
+        return totalBytes;
+    }
+
 
     private static void ValidateOptions(BoundedRoadTileWriterOptions options)
     {

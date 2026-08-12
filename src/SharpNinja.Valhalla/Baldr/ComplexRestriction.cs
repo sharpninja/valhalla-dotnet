@@ -275,6 +275,25 @@ public struct ComplexRestriction
     /// <summary>Gets the probability (percentage 0-100) for the restriction.</summary>
     public readonly byte Probability() => (byte)GetWord2(ProbabilityShift, ProbabilityMask);
 
+    /// <summary>Reconstructs the exact packed conditional time-domain word.</summary>
+    public readonly ulong ToTimeDomain()
+    {
+        var domain = new TimeDomain();
+        domain.SetType(DtType());
+        domain.SetDow(Dow());
+        domain.SetBeginHrs(BeginHrs());
+        domain.SetBeginMins(BeginMins());
+        domain.SetBeginMonth(BeginMonth());
+        domain.SetBeginDayDow(BeginDayDow());
+        domain.SetBeginWeek(BeginWeek());
+        domain.SetEndHrs(EndHrs());
+        domain.SetEndMins(EndMins());
+        domain.SetEndMonth(EndMonth());
+        domain.SetEndDayDow(EndDayDow());
+        domain.SetEndWeek(EndWeek());
+        return domain.TdValue;
+    }
+
     /// <summary>
     /// Gets the size, in bytes, of this complex restriction. Includes the fixed-size structure
     /// (24 bytes) plus the via edge id list (8 bytes each) that immediately follows on disk.

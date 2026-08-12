@@ -7,6 +7,23 @@ namespace SharpNinja.Valhalla.Generation.Tests.Roads;
 public sealed class PooledNodeArenaHostileTests
 {
     [Fact]
+    public void DefaultArena_UsesStageOwnedPoolsAndDoesNotRetainSharedPoolSlabs()
+    {
+        using var arena = new PooledNodeArena(
+            slabCapacity: 4,
+            memoryBudgetBytes: 4096);
+
+        Assert.True(arena.UsesStageOwnedPools);
+
+        NodeHandle handle = arena.Rent(CompletedNode(1));
+        arena.Release(handle);
+
+        Assert.Equal(1, arena.Metrics.TotalSlabsRented);
+        Assert.Equal(0, arena.Metrics.LiveSlotCount);
+    }
+
+
+    [Fact]
     public void Release_DoubleReleaseIsRejectedAsStale()
     {
         using var arena = new PooledNodeArena(slabCapacity: 1, memoryBudgetBytes: 4096);
@@ -47,15 +64,36 @@ public sealed class PooledNodeArenaHostileTests
     }
 
     [Fact]
-    public void MemoryBudget_RejectsUnboundedSlabGrowth()
+    public void MemoryBudget_RejectsBudgetThatCannotFitSharedPoolSlab()
     {
-        using var arena = new PooledNodeArena(slabCapacity: 1, memoryBudgetBytes: 64);
-        arena.Rent(default);
+        Assert.Throws<ValhallaGenerationResourceLimitException>(
+            () => new PooledNodeArena(
+                slabCapacity: 1,
+                memoryBudgetBytes: 64));
+    }
+
+    [Fact]
+    public void MemoryBudget_RejectsAndReturnsOversizedPoolRentals()
+    {
+        var itemPool = new OversizedArrayPool<NodeWorkItem>(64);
+        var generationPool = new OversizedArrayPool<uint>(64);
+        var statePool = new OversizedArrayPool<byte>(64);
+        var freeSlotPool = new OversizedArrayPool<int>(64);
+        using var arena = new PooledNodeArena(
+            slabCapacity: 1,
+            memoryBudgetBytes: 1024,
+            itemPool,
+            generationPool,
+            statePool,
+            freeSlotPool);
 
         Assert.Throws<ValhallaGenerationResourceLimitException>(
             () => arena.Rent(default));
-        Assert.Equal(1, arena.Metrics.TotalSlabsRented);
-        Assert.Equal(1, arena.Metrics.LiveSlotCount);
+        Assert.Equal(0, arena.Metrics.TotalSlabsRented);
+        Assert.Equal(1, itemPool.ReturnCount);
+        Assert.Equal(1, generationPool.ReturnCount);
+        Assert.Equal(1, statePool.ReturnCount);
+        Assert.Equal(1, freeSlotPool.ReturnCount);
     }
 
     [Fact]
@@ -83,4 +121,22 @@ public sealed class PooledNodeArenaHostileTests
         StableGraphId = GraphId.Invalid,
         LifecycleFlags = NodeLifecycleFlags.AllDurableStateWritten,
     };
+
+    private sealed class OversizedArrayPool<T>(int length) : System.Buffers.ArrayPool<T>
+    {
+        internal int ReturnCount { get; private set; }
+
+        public override T[] Rent(int minimumLength) =>
+            new T[Math.Max(length, minimumLength)];
+
+        public override void Return(T[] array, bool clearArray = false)
+        {
+            if (clearArray)
+            {
+                Array.Clear(array);
+            }
+
+            ReturnCount++;
+        }
+    }
 }

@@ -43,22 +43,30 @@ internal sealed class PooledNodeArena : IDisposable
     private const byte Live = 1;
     private const byte Free = 2;
     private const byte Quarantined = 3;
+    private static readonly int ObjectHeaderBytes = 2 * IntPtr.Size;
+    private static readonly int ArrayHeaderBytes =
+        AlignToPointer(ObjectHeaderBytes + sizeof(int));
+    private static readonly int ListObjectBytes =
+        AlignToPointer(ObjectHeaderBytes + IntPtr.Size + (2 * sizeof(int)));
+    private static readonly int SlabObjectBytes =
+        AlignToPointer(ObjectHeaderBytes + (4 * IntPtr.Size) + (2 * sizeof(int)));
+    private static readonly int OwnedPoolObjectBytes = ObjectHeaderBytes;
     private static int nextArenaId;
 
     private readonly int slabCapacity;
     private readonly long memoryBudgetBytes;
-    private readonly long logicalSlabBytes;
     private readonly ArrayPool<NodeWorkItem> itemPool;
     private readonly ArrayPool<uint> generationPool;
     private readonly ArrayPool<byte> statePool;
     private readonly ArrayPool<int> freeSlotPool;
     private readonly uint initialGeneration;
-    private readonly List<Slab> slabs = [];
+    private readonly List<Slab> slabs;
     private bool disposed;
     private long totalSlotRents;
     private long slotReuseCount;
     private int liveSlotCount;
     private int peakLiveSlotCount;
+    private long retainedSlabBytes;
     private long peakSlabBytes;
     private long staleHandleRejections;
     private long quarantinedSlotCount;
@@ -77,26 +85,51 @@ internal sealed class PooledNodeArena : IDisposable
         ArgumentOutOfRangeException.ThrowIfZero(initialGeneration);
         this.slabCapacity = slabCapacity;
         this.memoryBudgetBytes = memoryBudgetBytes;
-        this.itemPool = itemPool ?? ArrayPool<NodeWorkItem>.Shared;
-        this.generationPool = generationPool ?? ArrayPool<uint>.Shared;
-        this.statePool = statePool ?? ArrayPool<byte>.Shared;
-        this.freeSlotPool = freeSlotPool ?? ArrayPool<int>.Shared;
         this.initialGeneration = initialGeneration;
-        logicalSlabBytes = checked((long)slabCapacity * (
-            Unsafe.SizeOf<NodeWorkItem>() +
-            sizeof(uint) +
-            sizeof(byte) +
-            sizeof(int)));
-        if (logicalSlabBytes > memoryBudgetBytes)
+
+        long minimumLogicalSlabBytes = checked(
+            SlabObjectBytes +
+            ArrayBytes<NodeWorkItem>(slabCapacity) +
+            ArrayBytes<uint>(slabCapacity) +
+            ArrayBytes<byte>(slabCapacity) +
+            ArrayBytes<int>(slabCapacity));
+        long ownedPoolMetadataBytes = checked(4L * OwnedPoolObjectBytes);
+        long slabTableOverheadBytes = checked(
+            ListObjectBytes +
+            ArrayHeaderBytes +
+            ownedPoolMetadataBytes);
+        long minimumPerSlabBytes = checked(minimumLogicalSlabBytes + IntPtr.Size);
+        long availableForSlabs = memoryBudgetBytes - slabTableOverheadBytes;
+        if (availableForSlabs < minimumPerSlabBytes)
         {
             throw new ValhallaGenerationResourceLimitException(
                 "The node arena memory budget cannot fit one slab.");
         }
 
+        int maximumSlabCount = checked((int)Math.Min(
+            Array.MaxLength,
+            availableForSlabs / minimumPerSlabBytes));
+        slabs = new List<Slab>(maximumSlabCount);
+        retainedSlabBytes = checked(
+            ListObjectBytes +
+            ArrayBytes<Slab>(maximumSlabCount) +
+            ownedPoolMetadataBytes);
+
+        this.itemPool = itemPool ?? new NonRetainingArrayPool<NodeWorkItem>();
+        this.generationPool = generationPool ?? new NonRetainingArrayPool<uint>();
+        this.statePool = statePool ?? new NonRetainingArrayPool<byte>();
+        this.freeSlotPool = freeSlotPool ?? new NonRetainingArrayPool<int>();
+
         ArenaId = Interlocked.Increment(ref nextArenaId);
     }
 
     internal int ArenaId { get; }
+
+    internal bool UsesStageOwnedPools =>
+        !ReferenceEquals(itemPool, ArrayPool<NodeWorkItem>.Shared) &&
+        !ReferenceEquals(generationPool, ArrayPool<uint>.Shared) &&
+        !ReferenceEquals(statePool, ArrayPool<byte>.Shared) &&
+        !ReferenceEquals(freeSlotPool, ArrayPool<int>.Shared);
 
     internal PooledNodeArenaMetrics Metrics => new(
         totalSlotRents,
@@ -227,25 +260,84 @@ internal sealed class PooledNodeArena : IDisposable
 
     private Slab RentSlab()
     {
-        long nextBytes = checked((slabs.Count + 1L) * logicalSlabBytes);
-        if (nextBytes > memoryBudgetBytes)
+        NodeWorkItem[]? items = null;
+        uint[]? generations = null;
+        byte[]? states = null;
+        int[]? freeSlots = null;
+        try
         {
-            throw new ValhallaGenerationResourceLimitException(
-                "The node arena memory budget is exhausted.");
-        }
+            items = itemPool.Rent(slabCapacity);
+            generations = generationPool.Rent(slabCapacity);
+            states = statePool.Rent(slabCapacity);
+            freeSlots = freeSlotPool.Rent(slabCapacity);
 
-        NodeWorkItem[] items = itemPool.Rent(slabCapacity);
-        uint[] generations = generationPool.Rent(slabCapacity);
-        byte[] states = statePool.Rent(slabCapacity);
-        int[] freeSlots = freeSlotPool.Rent(slabCapacity);
-        Array.Clear(items, 0, slabCapacity);
-        Array.Clear(generations, 0, slabCapacity);
-        Array.Clear(states, 0, slabCapacity);
-        Array.Clear(freeSlots, 0, slabCapacity);
-        var slab = new Slab(items, generations, states, freeSlots);
-        slabs.Add(slab);
-        peakSlabBytes = Math.Max(peakSlabBytes, nextBytes);
-        return slab;
+            long slabBytes = checked(
+                SlabObjectBytes +
+                ArrayBytes<NodeWorkItem>(items.Length) +
+                ArrayBytes<uint>(generations.Length) +
+                ArrayBytes<byte>(states.Length) +
+                ArrayBytes<int>(freeSlots.Length));
+            long nextRetainedBytes = checked(
+                retainedSlabBytes + slabBytes);
+            if (slabs.Count == slabs.Capacity ||
+                nextRetainedBytes > memoryBudgetBytes)
+            {
+                throw new ValhallaGenerationResourceLimitException(
+                    "The node arena memory budget is exhausted.");
+            }
+
+            long transientBytes = nextRetainedBytes;
+
+            Array.Clear(items, 0, slabCapacity);
+            Array.Clear(generations, 0, slabCapacity);
+            Array.Clear(states, 0, slabCapacity);
+            Array.Clear(freeSlots, 0, slabCapacity);
+            var slab = new Slab(items, generations, states, freeSlots);
+            slabs.Add(slab);
+            retainedSlabBytes = nextRetainedBytes;
+            peakSlabBytes = Math.Max(peakSlabBytes, transientBytes);
+            return slab;
+        }
+        catch
+        {
+            if (items is not null)
+            {
+                itemPool.Return(items, clearArray: true);
+            }
+
+            if (generations is not null)
+            {
+                generationPool.Return(generations, clearArray: true);
+            }
+
+            if (states is not null)
+            {
+                statePool.Return(states, clearArray: true);
+            }
+
+            if (freeSlots is not null)
+            {
+                freeSlotPool.Return(freeSlots, clearArray: true);
+            }
+
+            throw;
+        }
+    }
+
+    private static long ArrayBytes<T>(int length) =>
+        AlignToPointer(checked(
+            ArrayHeaderBytes + ((long)Unsafe.SizeOf<T>() * length)));
+
+    private static long AlignToPointer(long value)
+    {
+        long alignment = IntPtr.Size;
+        return checked((value + alignment - 1) / alignment * alignment);
+    }
+
+    private static int AlignToPointer(int value)
+    {
+        int alignment = IntPtr.Size;
+        return checked((value + alignment - 1) / alignment * alignment);
     }
 
     private Slab ValidateLiveHandle(NodeHandle handle)
@@ -288,6 +380,22 @@ internal sealed class PooledNodeArena : IDisposable
         slab.States[slotIndex] = Free;
         slab.FreeSlots[slab.FreeCount++] = slotIndex;
     }
+
+    private sealed class NonRetainingArrayPool<T> : ArrayPool<T>
+    {
+        public override T[] Rent(int minimumLength) =>
+            GC.AllocateUninitializedArray<T>(minimumLength);
+
+        public override void Return(T[] array, bool clearArray = false)
+        {
+            if (clearArray &&
+                RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                Array.Clear(array);
+            }
+        }
+    }
+
 
     private sealed class Slab(
         NodeWorkItem[] items,

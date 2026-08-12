@@ -90,6 +90,39 @@ internal sealed class DurableFrontierEdgeSink :
                 options.SegmentSizeBytes));
     }
 
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                shapes.State.CurrentMemoryBytes +
+                edges.State.CurrentMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                shapes.State.CurrentScratchBytes +
+                edges.State.CurrentScratchBytes);
+        }
+    }
+
+    internal long PeakMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                shapes.State.PeakMemoryBytes +
+                edges.State.PeakMemoryBytes);
+        }
+    }
+
     internal long EdgeCount
     {
         get

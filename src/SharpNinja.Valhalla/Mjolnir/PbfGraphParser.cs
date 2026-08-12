@@ -2561,33 +2561,10 @@ public sealed class PbfGraphParser
     // GetTagTokens(value): default delimiter is ';'.
     private static string[] GetTagTokens(string value) => value.Split(';');
 
-    // get_time_range: a faithful-enough placeholder for the time-domain encoding. The full
-    // timeparsing.cc port (OSM opening-hours grammar -> TimeDomain words) is part of the tile
-    // build slice; here we emit a single non-zero TimeDomain word so conditional restrictions /
-    // speeds are recorded with a stable, ordered value. A real time-domain parse would replace
-    // this without changing the surrounding restriction/speed plumbing.
-    private static IReadOnlyList<ulong> GetTimeRange(string condition)
-    {
-        if (string.IsNullOrWhiteSpace(condition))
-        {
-            return Array.Empty<ulong>();
-        }
-
-        // Use a deterministic non-zero word derived from the condition string so distinct
-        // conditions are distinguishable and ordering in the sequence is stable.
-        ulong word = 1;
-        foreach (char c in condition.Trim())
-        {
-            word = unchecked((word * 31) + c);
-        }
-
-        if (word == 0)
-        {
-            word = 1;
-        }
-
-        return new[] { word };
-    }
+    // Faithful managed port of Valhalla 3.8.3 mjolnir/timeparsing.cc.
+    // Unsupported or malformed values return no domains so callers fail closed.
+    private static IReadOnlyList<ulong> GetTimeRange(string condition) =>
+        OsmConditionalTimeDomainParser.Parse(condition);
 
     // ===== Culdesac processor ==================================================
 

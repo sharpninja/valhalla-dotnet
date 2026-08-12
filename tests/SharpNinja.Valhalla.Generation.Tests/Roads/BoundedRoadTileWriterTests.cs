@@ -2,6 +2,7 @@ using SharpNinja.Valhalla.Baldr;
 using SharpNinja.Valhalla.Generation.Pbf;
 using SharpNinja.Valhalla.Generation.Roads.Frontier;
 using SharpNinja.Valhalla.Generation.Storage;
+using SharpNinja.Valhalla.Generation.TimeZones;
 using SharpNinja.Valhalla.Mjolnir;
 
 using Xunit;
@@ -72,6 +73,66 @@ public sealed class BoundedRoadTileWriterTests
             Assert.DoesNotContain(
                 Directory.EnumerateFiles(output, "*", SearchOption.AllDirectories),
                 path => path.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task WriteAsync_TimeZoneDatabaseWritesPinnedRoadNodeIndex()
+    {
+        string root = CreateRoot();
+        try
+        {
+            string shape = FindRepositoryArtifact(
+                "tests",
+                "SharpNinja.Valhalla.Generation.Tests",
+                "Fixtures",
+                "Timezone",
+                "2026c-jamaica",
+                "timezone-2026c-jamaica.shp");
+            string database = Path.Combine(root, "tz_world.sqlite");
+            await new ManagedTimeZoneDatabaseBuilder().BuildAsync(
+                new TimeZoneDatabaseBuildRequest(
+                    shape,
+                    "2026c",
+                    Path.Combine(root, "timezone-work"),
+                    database,
+                    64 * 1024 * 1024),
+                TestContext.Current.CancellationToken);
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new JamaicaRoadSource(),
+                    SemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using PooledRoadEdgeBuildResult graph =
+                await PooledRoadEdgeBuilder.BuildAsync(
+                    semanticStore,
+                    BuilderOptions(Path.Combine(root, "pooled")),
+                    TestContext.Current.CancellationToken);
+            string output = Path.Combine(root, "tiles");
+
+            await BoundedRoadTileWriter.WriteAsync(
+                semanticStore,
+                graph,
+                new BoundedRoadTileWriterOptions(
+                    output,
+                    MemoryBudgetBytes: 8 * 1024 * 1024,
+                    MaxDegreeOfParallelism: 1)
+                {
+                    TimeZoneDatabasePath = database,
+                },
+                TestContext.Current.CancellationToken);
+
+            string tilePath = Assert.Single(
+                Directory.EnumerateFiles(output, "*.gph", SearchOption.AllDirectories));
+            GraphTile tile = GraphTile.Create(output, GraphTile.GetTileId(tilePath)) ??
+                throw new InvalidDataException("The road timezone tile was not readable.");
+            Assert.All(
+                Enumerable.Range(0, checked((int)tile.Header().Nodecount())),
+                nodeIndex => Assert.Equal(88U, tile.Node(nodeIndex).Timezone()));
         }
         finally
         {
@@ -491,6 +552,23 @@ public sealed class BoundedRoadTileWriterTests
             ShapeBufferSizeBytes: 4096,
             SegmentSizeBytes: 64 * 1024);
 
+    private static string FindRepositoryArtifact(params string[] parts)
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            string candidate = Path.Combine([directory.FullName, .. parts]);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return Path.Combine(parts);
+    }
+
     private static string CreateRoot()
     {
         string root = Path.Combine(
@@ -652,6 +730,39 @@ public sealed class BoundedRoadTileWriterTests
 
             visitor.Node(10, 36.1000, -86.7600, EmptyTags());
             visitor.Node(11, 36.1000, -86.7400, EmptyTags());
+        }
+
+        private static IReadOnlyDictionary<string, string> EmptyTags() =>
+            new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
+    private sealed class JamaicaRoadSource : IOsmPbfEntitySource
+    {
+        public int FileCount => 1;
+
+        public void VisitFile(
+            int fileOrdinal,
+            OsmPbfEntityPass pass,
+            IOsmPbfVisitor visitor,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(0, fileOrdinal);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pass == OsmPbfEntityPass.Ways)
+            {
+                visitor.Way(
+                    100,
+                    [1UL, 2UL],
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["highway"] = "primary",
+                    });
+            }
+            else if (pass == OsmPbfEntityPass.Nodes)
+            {
+                visitor.Node(1, 18.1000, -77.3000, EmptyTags());
+                visitor.Node(2, 18.1010, -77.2990, EmptyTags());
+            }
         }
 
         private static IReadOnlyDictionary<string, string> EmptyTags() =>

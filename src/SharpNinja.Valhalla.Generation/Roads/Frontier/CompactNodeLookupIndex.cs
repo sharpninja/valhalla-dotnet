@@ -57,6 +57,31 @@ internal sealed class CompactNodeLookupIndex : IDisposable
         }
     }
 
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                input.State.CurrentMemoryBytes +
+                sorted.Output.State.CurrentMemoryBytes +
+                unique.State.CurrentMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                input.State.CurrentScratchBytes +
+                sorted.Output.State.CurrentScratchBytes +
+                unique.State.CurrentScratchBytes);
+        }
+    }
+
+
     internal long DuplicateNodeCount { get; }
 
     internal long PeakMemoryBytes { get; }

@@ -127,6 +127,93 @@ public sealed class ManagedRoadGraphBuilderTests
             Directory.Delete(root, recursive: true);
         }
     }
+    [Fact]
+    public async Task BuildAsync_PooledFrontier_ComposesBoundedProductionPipeline()
+    {
+        string pbfPath = FindRepositoryArtifact("artifacts", "monaco.osm.pbf");
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "valhalla-road-pooled-composition-" +
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            string outputDirectory = Path.Combine(root, "tiles");
+            var builder = new ManagedRoadGraphBuilder();
+            ManagedRoadGraphBuildResult result = await builder.BuildAsync(
+                new ManagedRoadGraphBuildRequest(
+                    [pbfPath],
+                    Path.Combine(root, "work"),
+                    outputDirectory,
+                    IntermediateStorageMode.MemoryMapped,
+                    MemoryBudgetBytes: 256 * 1024 * 1024,
+                    ScratchDiskBudgetBytes: 4L * 1024 * 1024 * 1024,
+                    TileBuilderConfig: new TileBuilderConfig
+                    {
+                        GridDivisions = 8,
+                        Hierarchy = false,
+                        Shortcuts = false,
+                        MaxDegreeOfParallelism = 1,
+                    })
+                {
+                    Pipeline = ManagedRoadGraphPipeline.PooledFrontier,
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(result.TileBuilderResult.Success);
+            Assert.True(result.TileBuilderResult.TileCount > 0);
+            Assert.NotNull(result.FrontierMetrics);
+            Assert.True(result.FrontierMetrics.GraphAnchorsCreated > 0);
+            ManagedRoadGraphResourceMetrics resourceMetrics =
+                Assert.IsType<ManagedRoadGraphResourceMetrics>(
+                    result.ResourceMetrics);
+            Assert.Equal(
+                resourceMetrics.MemoryHighWaterMarkBytes,
+                result.PeakIntermediateMemoryBytes);
+            Assert.Equal(
+                resourceMetrics.ScratchHighWaterMarkBytes,
+                result.ScratchDiskHighWaterMarkBytes);
+            Assert.Equal(
+                new[]
+                {
+                    resourceMetrics.IngestionMemoryPeakBytes,
+                    resourceMetrics.SemanticPhaseMemoryPeakBytes,
+                    resourceMetrics.GraphAndTilePhaseMemoryPeakBytes,
+                    resourceMetrics.RestrictionPhaseMemoryPeakBytes,
+                }.Max(),
+                result.PeakIntermediateMemoryBytes);
+            Assert.Equal(
+                new[]
+                {
+                    resourceMetrics.IngestionScratchPeakBytes,
+                    resourceMetrics.SemanticPhaseScratchPeakBytes,
+                    resourceMetrics.GraphAndTilePhaseScratchPeakBytes,
+                    resourceMetrics.RestrictionPhaseScratchPeakBytes,
+                }.Max(),
+                result.ScratchDiskHighWaterMarkBytes);
+            Assert.True(
+                resourceMetrics.GraphAndTilePhaseScratchPeakBytes >=
+                result.FrontierMetrics.MappedStorageHighWaterMarkBytes);
+            Assert.True(
+                resourceMetrics.RestrictionPhaseScratchPeakBytes > 0);
+            Assert.True(result.ScratchDiskHighWaterMarkBytes > 0);
+            Assert.Contains(
+                "pooled.restrictions",
+                result.TileBuilderResult.StageDurations);
+            Assert.NotEmpty(
+                Directory.GetFiles(
+                    outputDirectory,
+                    "*.gph",
+                    SearchOption.AllDirectories));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+
 
     private static async Task<ManagedRoadGraphBuildResult> BuildAsync(
         string pbfPath,

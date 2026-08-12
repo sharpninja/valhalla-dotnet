@@ -26,6 +26,53 @@ internal sealed class NodeIncidenceIndex : IDisposable
         SummaryManifest = summaryManifest;
     }
 
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                sorted.Output.State.CurrentMemoryBytes +
+                summaries.State.CurrentMemoryBytes);
+        }
+    }
+
+    internal long PeakMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                sorted.Receipt.PeakMemoryBytes +
+                sorted.Output.State.PeakMemoryBytes +
+                summaries.State.PeakMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                sorted.Output.State.CurrentScratchBytes +
+                summaries.State.CurrentScratchBytes);
+        }
+    }
+
+    internal long ScratchHighWaterMarkBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                sorted.Receipt.ScratchHighWaterMarkBytes +
+                sorted.Output.State.ScratchHighWaterMarkBytes +
+                summaries.State.ScratchHighWaterMarkBytes);
+        }
+    }
+
+
     internal long IncidenceCount
     {
         get

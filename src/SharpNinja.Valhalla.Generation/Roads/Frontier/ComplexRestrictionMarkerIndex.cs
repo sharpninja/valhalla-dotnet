@@ -169,7 +169,6 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
                         options.SegmentSizeBytes));
             EmitMarkers(
                 semanticStore,
-                graph,
                 endpoints.Output,
                 markerInput,
                 cancellationToken);
@@ -268,7 +267,6 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
 
     private static void EmitMarkers(
         CompactOsmSemanticStore semanticStore,
-        PooledRoadEdgeBuildResult graph,
         IIntermediateSequenceStore<RestrictionWayEndpointRecord> endpoints,
         IIntermediateSequenceStore<ComplexRestrictionMarkerRecord> destination,
         CancellationToken cancellationToken)
@@ -289,16 +287,7 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
                 continue;
             }
 
-            uint modes = projection.Modes;
-            bool viaWay = projection.ViaWay;
-            bool includeFromWay = projection.IncludeFromWay;
-
-            GenerationRestrictionViaRecord firstVia =
-                semanticStore.ReadRestrictionVia(restriction.ViaOffset);
-            GenerationRestrictionViaRecord lastVia =
-                semanticStore.ReadRestrictionVia(
-                    checked(restriction.ViaOffset + restriction.ViaCount - 1));
-            if (includeFromWay)
+            if (projection.IncludeFromWay)
             {
                 EmitPartOfMarkers(
                     endpoints,
@@ -314,145 +303,85 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
                 destination,
                 ref canonicalOrdinal,
                 cancellationToken);
+            EmitWayModeMarkers(
+                endpoints,
+                restriction.FromWayId,
+                projection.Modes,
+                startRestriction: true,
+                destination,
+                ref canonicalOrdinal,
+                cancellationToken);
+            EmitWayModeMarkers(
+                endpoints,
+                restriction.ToWayId,
+                projection.Modes,
+                startRestriction: false,
+                destination,
+                ref canonicalOrdinal,
+                cancellationToken);
 
-            if (viaWay)
+            if (!projection.ViaWay)
             {
-                EmitBoundaryMarkers(
-                    endpoints,
-                    restriction.FromWayId,
-                    firstVia.MemberId,
-                    modes,
-                    startBoundary: true,
-                    destination,
-                    ref canonicalOrdinal,
-                    cancellationToken);
-                EmitBoundaryMarkers(
-                    endpoints,
-                    restriction.ToWayId,
-                    lastVia.MemberId,
-                    modes,
-                    startBoundary: false,
-                    destination,
-                    ref canonicalOrdinal,
-                    cancellationToken);
-                for (long viaOrdinal = restriction.ViaOffset;
-                     viaOrdinal < restriction.ViaOffset + restriction.ViaCount;
-                     viaOrdinal++)
+                continue;
+            }
+
+            for (long viaOrdinal = restriction.ViaOffset;
+                 viaOrdinal < restriction.ViaOffset + restriction.ViaCount;
+                 viaOrdinal++)
+            {
+                GenerationRestrictionViaRecord via =
+                    semanticStore.ReadRestrictionVia(viaOrdinal);
+                if (via.MemberType == OsmMemberType.Way)
                 {
-                    GenerationRestrictionViaRecord via =
-                        semanticStore.ReadRestrictionVia(viaOrdinal);
-                    if (via.MemberType == OsmMemberType.Way)
-                    {
-                        EmitPartOfMarkers(
-                            endpoints,
-                            via.MemberId,
-                            destination,
-                            ref canonicalOrdinal,
-                            cancellationToken);
-                    }
+                    EmitPartOfMarkers(
+                        endpoints,
+                        via.MemberId,
+                        destination,
+                        ref canonicalOrdinal,
+                        cancellationToken);
                 }
             }
-            else if (firstVia.MemberType == OsmMemberType.Node &&
-                     graph.TryGetGraphId(firstVia.MemberId, out GraphId viaNode))
-            {
-                EmitNodeBoundaryMarkers(
-                    endpoints,
-                    restriction.FromWayId,
-                    viaNode,
-                    modes,
-                    startBoundary: true,
-                    destination,
-                    ref canonicalOrdinal,
-                    cancellationToken);
-                EmitNodeBoundaryMarkers(
-                    endpoints,
-                    restriction.ToWayId,
-                    viaNode,
-                    modes,
-                    startBoundary: false,
-                    destination,
-                    ref canonicalOrdinal,
-                    cancellationToken);
-            }
         }
     }
 
-    private static void EmitBoundaryMarkers(
+    private static void EmitWayModeMarkers(
         IIntermediateSequenceStore<RestrictionWayEndpointRecord> endpoints,
-        long boundaryWayId,
-        long viaWayId,
+        long wayId,
         uint modes,
-        bool startBoundary,
+        bool startRestriction,
         IIntermediateSequenceStore<ComplexRestrictionMarkerRecord> destination,
         ref long canonicalOrdinal,
         CancellationToken cancellationToken)
     {
-        (long start, long end) = GetWayRange(endpoints, boundaryWayId);
+        (long start, long end) = GetWayRange(endpoints, wayId);
         for (long ordinal = start; ordinal < end; ordinal++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             RestrictionWayEndpointRecord endpoint = endpoints.Read(ordinal);
-            if (ContainsWayNode(endpoints, viaWayId, endpoint.NodeId))
+            if (endpoint.Role != EdgeEndpointRole.Source)
             {
-                EmitBoundaryMarker(
-                    endpoint,
-                    modes,
-                    startBoundary,
-                    destination,
-                    ref canonicalOrdinal);
+                continue;
             }
-        }
-    }
 
-    private static void EmitNodeBoundaryMarkers(
-        IIntermediateSequenceStore<RestrictionWayEndpointRecord> endpoints,
-        long boundaryWayId,
-        GraphId viaNode,
-        uint modes,
-        bool startBoundary,
-        IIntermediateSequenceStore<ComplexRestrictionMarkerRecord> destination,
-        ref long canonicalOrdinal,
-        CancellationToken cancellationToken)
-    {
-        (long start, long end) = GetWayRange(endpoints, boundaryWayId);
-        for (long ordinal = start; ordinal < end; ordinal++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            RestrictionWayEndpointRecord endpoint = endpoints.Read(ordinal);
-            if (endpoint.NodeId == viaNode)
-            {
-                EmitBoundaryMarker(
-                    endpoint,
-                    modes,
-                    startBoundary,
-                    destination,
-                    ref canonicalOrdinal);
-            }
+            destination.Append(
+                new ComplexRestrictionMarkerRecord(
+                    endpoint.NodeId,
+                    endpoint.EdgeRecordId,
+                    Forward: true,
+                    StartModes: startRestriction ? modes : 0,
+                    EndModes: startRestriction ? 0 : modes,
+                    PartOfComplexRestriction: false,
+                    canonicalOrdinal++));
+            destination.Append(
+                new ComplexRestrictionMarkerRecord(
+                    endpoint.OtherNodeId,
+                    endpoint.EdgeRecordId,
+                    Forward: false,
+                    StartModes: startRestriction ? modes : 0,
+                    EndModes: startRestriction ? 0 : modes,
+                    PartOfComplexRestriction: false,
+                    canonicalOrdinal++));
         }
-    }
-
-    private static void EmitBoundaryMarker(
-        RestrictionWayEndpointRecord endpoint,
-        uint modes,
-        bool startBoundary,
-        IIntermediateSequenceStore<ComplexRestrictionMarkerRecord> destination,
-        ref long canonicalOrdinal)
-    {
-        GraphId startNode = startBoundary
-            ? endpoint.OtherNodeId
-            : endpoint.NodeId;
-        bool forward = startBoundary
-            ? endpoint.Role == EdgeEndpointRole.Target
-            : endpoint.Role == EdgeEndpointRole.Source;
-        destination.Append(
-            new ComplexRestrictionMarkerRecord(
-                startNode,
-                endpoint.EdgeRecordId,
-                forward,
-                StartModes: startBoundary ? modes : 0,
-                EndModes: startBoundary ? 0 : modes,
-                PartOfComplexRestriction: false,
-                canonicalOrdinal++));
     }
 
     private static void EmitPartOfMarkers(
@@ -491,32 +420,6 @@ internal sealed class ComplexRestrictionMarkerIndex : IDisposable
                     PartOfComplexRestriction: true,
                     canonicalOrdinal++));
         }
-    }
-
-
-    private static bool ContainsWayNode(
-        IIntermediateSequenceStore<RestrictionWayEndpointRecord> endpoints,
-        long wayId,
-        GraphId nodeId)
-    {
-        (long start, long end) = GetWayRange(endpoints, wayId);
-        long low = start;
-        long high = end;
-        while (low < high)
-        {
-            long middle = low + ((high - low) / 2);
-            RestrictionWayEndpointRecord candidate = endpoints.Read(middle);
-            if (candidate.NodeId.CompareTo(nodeId) < 0)
-            {
-                low = middle + 1;
-            }
-            else
-            {
-                high = middle;
-            }
-        }
-
-        return low < end && endpoints.Read(low).NodeId == nodeId;
     }
 
     private static (long Start, long End) GetWayRange(

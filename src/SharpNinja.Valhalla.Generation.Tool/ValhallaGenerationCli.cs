@@ -471,7 +471,15 @@ public static partial class ValhallaGenerationCli
                             MaxDegreeOfParallelism = GetPositiveInt32(
                                 invocation,
                                 "max-degree-of-parallelism"),
-                        }),
+                        })
+                    {
+                        Pipeline = GetEnum<ManagedRoadGraphPipeline>(
+                            invocation,
+                            "road-pipeline"),
+                        TimeZoneDatabasePath = GetOptionalPath(
+                            invocation,
+                            "timezone-database"),
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
             TileBuilderResult result = build.TileBuilderResult;
@@ -825,6 +833,10 @@ public static partial class ValhallaGenerationCli
             "scratch-budget-bytes",
             DefaultScratchBudgetBytes.ToString(CultureInfo.InvariantCulture));
         AddDefault(options, "storage-mode", IntermediateStorageMode.Auto.ToString());
+        AddDefault(
+            options,
+            "road-pipeline",
+            ManagedRoadGraphPipeline.Legacy.ToString());
         AddDefault(options, "dataset-id", "0");
         AddDefault(options, "build-id", "0");
         AddDefault(options, "deterministic-output", bool.TrueString);
@@ -881,7 +893,9 @@ public static partial class ValhallaGenerationCli
             ["build-bss"] = Spec(
                 ["graph-directory", "pbf", "output"],
                 ["graph-directory", "pbf", "output"]),
-            ["build-tiles"] = Spec(["pbf", "output"], ["pbf", "output"]),
+            ["build-tiles"] = Spec(
+                ["pbf", "output", "timezone-database", "road-pipeline"],
+                ["pbf", "output"]),
             ["build-extract"] = Spec(
                 ["graph-directory", "output", "region-id"],
                 ["graph-directory", "output", "region-id"]),

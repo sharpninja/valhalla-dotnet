@@ -144,7 +144,7 @@ public sealed class ComplexRestrictionSequenceSetTests
     }
 
     [Fact]
-    public async Task ConditionalRestriction_FailsClosedUntilOfficialTimeDomainParserAndRuntimeEvaluatorExist()
+    public async Task MultipleConditionalDomains_EmitOneForwardPerDomainAndOneReverse()
     {
         string root = CreateRoot();
         try
@@ -157,27 +157,104 @@ public sealed class ComplexRestrictionSequenceSetTests
                             10,
                             100,
                             20,
-                            "no_left_turn @ Mo-Fr 07:00-09:00"),
+                            "no_left_turn @ " +
+                            "Mo-Fr 06:00-11:00,17:00-19:00"),
                     ]),
                     CreateSemanticOptions(Path.Combine(root, "semantic")),
                     TestContext.Current.CancellationToken);
+            using ComplexRestrictionSequenceSet sequenceSet =
+                await ComplexRestrictionSequenceSet.BuildAsync(
+                    semanticStore,
+                    CreateSequenceOptions(Path.Combine(root, "projection")),
+                    TestContext.Current.CancellationToken);
 
-            InvalidDataException error =
-                await Assert.ThrowsAsync<InvalidDataException>(
-                    async () =>
-                    {
-                        using ComplexRestrictionSequenceSet _ =
-                            await ComplexRestrictionSequenceSet.BuildAsync(
-                                semanticStore,
-                                CreateSequenceOptions(
-                                    Path.Combine(root, "projection")),
-                                TestContext.Current.CancellationToken);
-                    });
+            Assert.Equal(2, sequenceSet.Forward.Count);
+            Assert.Equal(
+                [23622321788UL, 40802193788UL],
+                sequenceSet.Forward.Select(
+                    static restriction => restriction.TimeDomain()));
+            Assert.All(
+                sequenceSet.Forward,
+                static restriction => Assert.Equal([20UL], restriction.Vias()));
+            Assert.Single(sequenceSet.Reverse);
+            Assert.Equal(0UL, sequenceSet.Reverse[0].TimeDomain());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
-            Assert.Contains(
-                "conditional restriction",
-                error.Message,
-                StringComparison.OrdinalIgnoreCase);
+    [Fact]
+    public async Task ConditionalAuxiliaryHolidayClauses_AreIgnoredWhenAValidDomainExists()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new RestrictionMatrixSource(
+                    [
+                        RestrictionSpec.ConditionalNodeVia(
+                            10,
+                            100,
+                            20,
+                            "no_left_turn @ Aug 01-Jun 30 Mo-Fr 07:00-17:00; PH -1 day off; PH off"),
+                    ]),
+                    CreateSemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using ComplexRestrictionSequenceSet sequenceSet =
+                await ComplexRestrictionSequenceSet.BuildAsync(
+                    semanticStore,
+                    CreateSequenceOptions(Path.Combine(root, "projection")),
+                    TestContext.Current.CancellationToken);
+
+            Assert.Single(sequenceSet.Forward);
+            Assert.Equal(
+                Assert.Single(
+                    ValhallaTimeDomainParser.Parse(
+                        "Aug 01-Jun 30 Mo-Fr 07:00-17:00")),
+                sequenceSet.Forward[0].TimeDomain());
+            Assert.Single(sequenceSet.Reverse);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyHourDayTags_PairMultipleWindowsExactly()
+    {
+        string root = CreateRoot();
+        try
+        {
+            using CompactOsmSemanticStore semanticStore =
+                await CompactOsmSemanticStore.BuildAsync(
+                    new RestrictionMatrixSource(
+                    [
+                        RestrictionSpec.LegacyConditionalWindowNodeVia(
+                            10,
+                            100,
+                            20,
+                            "Mo",
+                            "Fr",
+                            "06:00;17:00",
+                            "11:00;19:00"),
+                    ]),
+                    CreateSemanticOptions(Path.Combine(root, "semantic")),
+                    TestContext.Current.CancellationToken);
+            using ComplexRestrictionSequenceSet sequenceSet =
+                await ComplexRestrictionSequenceSet.BuildAsync(
+                    semanticStore,
+                    CreateSequenceOptions(Path.Combine(root, "projection")),
+                    TestContext.Current.CancellationToken);
+
+            Assert.Equal(
+                [23622321788UL, 40802193788UL],
+                sequenceSet.Forward.Select(
+                    static restriction => restriction.TimeDomain()));
+            Assert.Single(sequenceSet.Reverse);
         }
         finally
         {
@@ -578,6 +655,28 @@ public sealed class ComplexRestrictionSequenceSetTests
                 {
                     ["type"] = "restriction",
                     ["restriction:conditional"] = condition,
+                });
+
+        internal static RestrictionSpec LegacyConditionalWindowNodeVia(
+            long from,
+            long via,
+            long to,
+            string dayOn,
+            string dayOff,
+            string hourOn,
+            string hourOff) =>
+            NodeVia(
+                from,
+                via,
+                to,
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["type"] = "restriction",
+                    ["restriction"] = "no_left_turn",
+                    ["day_on"] = dayOn,
+                    ["day_off"] = dayOff,
+                    ["hour_on"] = hourOn,
+                    ["hour_off"] = hourOff,
                 });
 
         internal static RestrictionSpec LegacyConditionalNodeVia(

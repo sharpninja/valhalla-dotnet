@@ -29,7 +29,40 @@ internal sealed class StableGraphIdentityIndex : IDisposable
         this.identities = identities;
         this.lookup = lookup;
         IdentityManifest = identityManifest;
+        PeakMemoryBytes = checked(
+            orderedCandidates.Receipt.PeakMemoryBytes +
+            orderedCandidates.Output.State.PeakMemoryBytes +
+            identities.State.PeakMemoryBytes +
+            lookup.Receipt.PeakMemoryBytes +
+            lookup.Output.State.PeakMemoryBytes);
     }
+
+    internal long PeakMemoryBytes { get; }
+
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                orderedCandidates.Output.State.CurrentMemoryBytes +
+                identities.State.CurrentMemoryBytes +
+                lookup.Output.State.CurrentMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                orderedCandidates.Output.State.CurrentScratchBytes +
+                identities.State.CurrentScratchBytes +
+                lookup.Output.State.CurrentScratchBytes);
+        }
+    }
+
 
     internal long IdentityCount
     {
@@ -86,7 +119,11 @@ internal sealed class StableGraphIdentityIndex : IDisposable
         {
             long middle = low + ((high - low) / 2);
             StableGraphNodeIdentity candidate = identities.Read(middle);
-            if (candidate.GraphId < graphId)
+            int comparison =
+                NodeEdgeIncidenceOrdering.CompareGraphIds(
+                    candidate.GraphId,
+                    graphId);
+            if (comparison < 0)
             {
                 low = middle + 1;
             }

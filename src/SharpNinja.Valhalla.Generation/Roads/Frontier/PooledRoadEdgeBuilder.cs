@@ -16,6 +16,25 @@ internal sealed record PooledRoadEdgeBuilderOptions(
     int ShapeBufferSizeBytes = 64 * 1024,
     int SegmentSizeBytes = 64 * 1024 * 1024);
 
+internal sealed record PooledRoadEdgeBuildResourceMetrics(
+    long NodeLookupPhasePeakMemoryBytes,
+    long CandidatePhasePeakMemoryBytes,
+    long IdentityPhasePeakMemoryBytes,
+    long FrontierPhasePeakMemoryBytes,
+    long GraphNodePhasePeakMemoryBytes)
+{
+    internal long PeakAggregateMemoryBytes =>
+        Math.Max(
+            NodeLookupPhasePeakMemoryBytes,
+            Math.Max(
+                CandidatePhasePeakMemoryBytes,
+                Math.Max(
+                    IdentityPhasePeakMemoryBytes,
+                    Math.Max(
+                        FrontierPhasePeakMemoryBytes,
+                        GraphNodePhasePeakMemoryBytes))));
+}
+
 internal sealed class PooledRoadEdgeBuildResult : IDisposable
 {
     private readonly CompactNodeLookupIndex nodeIndex;
@@ -29,14 +48,48 @@ internal sealed class PooledRoadEdgeBuildResult : IDisposable
         StableGraphIdentityIndex graphIdentities,
         DurableFrontierEdgeSink edges,
         NodeEdgeIncidenceIndex graphNodes,
-        ValhallaGenerationFrontierMetrics frontierMetrics)
+        ValhallaGenerationFrontierMetrics frontierMetrics,
+        PooledRoadEdgeBuildResourceMetrics resourceMetrics)
     {
         this.nodeIndex = nodeIndex;
         this.graphIdentities = graphIdentities;
         this.edges = edges;
         this.graphNodes = graphNodes;
         FrontierMetrics = frontierMetrics;
+        ResourceMetrics = resourceMetrics;
     }
+
+    internal PooledRoadEdgeBuildResourceMetrics ResourceMetrics { get; }
+
+    internal long PeakAggregateMemoryBytes =>
+        ResourceMetrics.PeakAggregateMemoryBytes;
+
+    internal long CurrentMemoryBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodeIndex.CurrentMemoryBytes +
+                graphIdentities.CurrentMemoryBytes +
+                edges.CurrentMemoryBytes +
+                graphNodes.CurrentMemoryBytes);
+        }
+    }
+
+    internal long CurrentScratchBytes
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return checked(
+                nodeIndex.CurrentScratchBytes +
+                graphIdentities.CurrentScratchBytes +
+                edges.CurrentScratchBytes +
+                graphNodes.CurrentScratchBytes);
+        }
+    }
+
 
     internal long EdgeCount
     {
@@ -233,6 +286,11 @@ internal static class PooledRoadEdgeBuilder
                 options.GridDivisions,
                 cancellationToken);
             await candidates.CompleteAsync(cancellationToken).ConfigureAwait(false);
+            long candidatePhasePeakMemory = checked(
+                nodeIndex.CurrentMemoryBytes +
+                candidates.State.PeakMemoryBytes);
+            long candidateRetainedDuringIdentityMemory =
+                candidates.State.CurrentMemoryBytes;
             graphIdentities = await StableGraphIdentityIndex.BuildAsync(
                     candidates,
                     new StableGraphIdentityIndexOptions(
@@ -288,12 +346,33 @@ internal static class PooledRoadEdgeBuilder
                 aggregate,
                 arenaMemory,
                 edgeMemory);
+            long identityPhasePeakMemory = checked(
+                nodeIndex.CurrentMemoryBytes +
+                candidateRetainedDuringIdentityMemory +
+                graphIdentities.PeakMemoryBytes);
+            long frontierPhasePeakMemory = checked(
+                nodeIndex.CurrentMemoryBytes +
+                graphIdentities.CurrentMemoryBytes +
+                edges.PeakMemoryBytes +
+                arena.Metrics.PeakSlabBytes);
+            long graphNodePhasePeakMemory = checked(
+                nodeIndex.CurrentMemoryBytes +
+                graphIdentities.CurrentMemoryBytes +
+                edges.CurrentMemoryBytes +
+                graphNodes.PeakMemoryBytes);
+            var resourceMetrics = new PooledRoadEdgeBuildResourceMetrics(
+                nodeIndex.PeakMemoryBytes,
+                candidatePhasePeakMemory,
+                identityPhasePeakMemory,
+                frontierPhasePeakMemory,
+                graphNodePhasePeakMemory);
             var result = new PooledRoadEdgeBuildResult(
                 nodeIndex,
                 graphIdentities,
                 edges,
                 graphNodes,
-                metrics);
+                metrics,
+                resourceMetrics);
             nodeIndex = null;
             graphIdentities = null;
             edges = null;
@@ -327,7 +406,7 @@ internal static class PooledRoadEdgeBuilder
             }
 
             GenerationNodeRecord node = nodeIndex.ReadNode(ordinal);
-            if (!IsGraphAnchor(semanticStore, node))
+            if (!IsRoutableGraphAnchor(semanticStore, node))
             {
                 continue;
             }
@@ -376,7 +455,7 @@ internal static class PooledRoadEdgeBuilder
                         $"OSM node {reference.OsmNodeId} referenced by way {way.OsmWayId} was not found.");
                 }
 
-                bool isAnchor = IsGraphAnchor(semanticStore, node);
+                bool isAnchor = IsRoutableGraphAnchor(semanticStore, node);
                 GraphId graphId = GraphId.Invalid;
                 if (isAnchor &&
                     !graphIdentities.TryGetGraphId(
@@ -399,13 +478,14 @@ internal static class PooledRoadEdgeBuilder
         return aggregate;
     }
 
-    private static bool IsGraphAnchor(
+    private static bool IsRoutableGraphAnchor(
         CompactOsmSemanticStore semanticStore,
         in GenerationNodeRecord node)
     {
         if (!semanticStore.TryFindIncidenceSummary(
                 node.OsmNodeId,
-                out NodeIncidenceSummary summary))
+                out NodeIncidenceSummary summary) ||
+            summary.DistinctWayCount == 0)
         {
             return false;
         }

@@ -55,6 +55,18 @@ public sealed class StoredOsmPbfEntitySource : IOsmPbfEntitySource, IDisposable
         relations.State.PeakMemoryBytes +
         payloads.State.PeakMemoryBytes;
 
+    public long CurrentIntermediateMemoryBytes =>
+        nodes.State.CurrentMemoryBytes +
+        ways.State.CurrentMemoryBytes +
+        relations.State.CurrentMemoryBytes +
+        payloads.State.CurrentMemoryBytes;
+
+    public long CurrentScratchBytes =>
+        nodes.State.CurrentScratchBytes +
+        ways.State.CurrentScratchBytes +
+        relations.State.CurrentScratchBytes +
+        payloads.State.CurrentScratchBytes;
+
     public long ScratchHighWaterMarkBytes =>
         nodes.State.ScratchHighWaterMarkBytes +
         ways.State.ScratchHighWaterMarkBytes +
