@@ -1,0 +1,7 @@
+# MCP marker missing (lab policy update)
+
+TimestampUtc: 20260812T215313Z
+Observation: F:\GitHub\TruckMate\AGENTS-README-FIRST.yaml not present (Test-Path=False). Only AGENTS.md found.
+Consequence: MCP plugin reports MCP_UNTRUSTED; cannot workflow.todo.update/get for PHASE-MJOLNIRFRONTIER-001.
+Intended remaining (not applied live): LAB-ONLY Azure not used; LEGION2 under bar; DESKTOP not remotable; unlock lab L48 run / remoting / APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER.
+Action needed: restart/rewrite MCP Server marker for TruckMate workspace, then re-apply remaining note.

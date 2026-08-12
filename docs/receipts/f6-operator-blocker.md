@@ -39,3 +39,7 @@ Tip: 6ee5c4465971d3c365234fce2668b8a5f6e58e51
 
 ## MCP
 done remains false until formal-pass L48 + 7 daily stamps + CLI promote after stamp, or approved amendment.
+
+## MCP marker
+AGENTS-README-FIRST.yaml missing on TruckMate root at 20260812T215313Z; live TODO update not applied. Intended remaining is lab-only unlock list above.
+
