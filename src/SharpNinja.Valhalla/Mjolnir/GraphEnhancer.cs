@@ -89,6 +89,11 @@ public sealed class GraphEnhancer
         /// <summary>Number of edges marked not-thru.</summary>
         public uint NotThru { get; set; }
 
+        /// <summary>
+        /// Number of tile files written by <see cref="EnhanceTileDirectory"/>.
+        /// </summary>
+        public int EnhancedTileWriteCount { get; set; }
+
         /// <summary>Number of directed edges processed by the second enhancement pass.</summary>
         public ulong SecondPassEdgeCount { get; set; }
 
@@ -273,6 +278,87 @@ public sealed class GraphEnhancer
         return result;
     }
 
+    /// <summary>
+    /// Enhances every local-level <c>.gph</c> under <paramref name="sourceTileDirectory"/>
+    /// one tile at a time into <paramref name="destinationTileDirectory"/> without retaining
+    /// a full dual source/enhanced <see cref="Dictionary{TKey,TValue}"/> of all tiles.
+    /// Neighbor reads come from a disk-backed tile source.
+    /// </summary>
+    public EnhancerStats EnhanceTileDirectory(
+        string sourceTileDirectory,
+        string destinationTileDirectory,
+        int maxDegreeOfParallelism = 1,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceTileDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationTileDirectory);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDegreeOfParallelism);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string fullSource = Path.GetFullPath(sourceTileDirectory);
+        string fullDest = Path.GetFullPath(destinationTileDirectory);
+        Directory.CreateDirectory(fullDest);
+
+        string[] files = Directory.GetFiles(
+            fullSource,
+            "*" + GraphTile.SuffixNonCompressed,
+            SearchOption.AllDirectories);
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+        var orderedIds = new List<GraphId>(files.Length);
+        foreach (string file in files)
+        {
+            orderedIds.Add(GraphTile.GetTileId(file));
+        }
+
+        orderedIds.Sort(static (a, b) => a.Value.CompareTo(b.Value));
+
+        var diskSource = new DiskTileSource(fullSource);
+        int writeCount = 0;
+        // Serial path is the bounded default; parallelism is reserved for future
+        // per-tile isolation and currently clamped for deterministic publication.
+        _ = maxDegreeOfParallelism;
+        foreach (GraphId tileId in orderedIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            GraphId tileBase = tileId.TileBase();
+            byte[]? enhanced = EnhanceTile(
+                tileBase,
+                diskSource,
+                inferInternalIntersections: true,
+                inferTurnChannels: true,
+                cancellationToken);
+            string relative = GraphTile.FileSuffix(tileBase);
+            string destPath = Path.Combine(fullDest, relative);
+            string? destParent = Path.GetDirectoryName(destPath);
+            if (!string.IsNullOrEmpty(destParent))
+            {
+                Directory.CreateDirectory(destParent);
+            }
+
+            if (enhanced is null)
+            {
+                string sourcePath = Path.Combine(fullSource, relative);
+                if (File.Exists(sourcePath))
+                {
+                    File.Copy(sourcePath, destPath, overwrite: true);
+                    writeCount++;
+                }
+
+                continue;
+            }
+
+            File.WriteAllBytes(destPath, enhanced);
+            writeCount++;
+            // Drop per-tile cache pressure so peak retained models stay bounded.
+            diskSource.Evict(tileBase);
+        }
+
+        _stats.MaximumConcurrency = Math.Max(_stats.MaximumConcurrency, 1);
+        _stats.EnhancedTileWriteCount = writeCount;
+        return _stats;
+    }
+
     private sealed record EnhancementWorker(
         GraphEnhancer Enhancer,
         InMemoryTileSource Reader);
@@ -367,6 +453,47 @@ public sealed class GraphEnhancer
             _cache[@base.Value] = model;
             return model;
         }
+    }
+
+    /// <summary>
+    /// Disk-backed tile source for streaming enhance. Loads blobs on demand and
+    /// supports explicit eviction so retained models stay bounded.
+    /// </summary>
+    private sealed class DiskTileSource : ITileSource
+    {
+        private readonly string _tileDir;
+        private readonly Dictionary<ulong, TileModel?> _cache = new();
+
+        public DiskTileSource(string tileDir) => _tileDir = tileDir;
+
+        public TileModel? CreateMutableTile(GraphId tileId)
+        {
+            GraphId @base = tileId.TileBase();
+            string path = Path.Combine(_tileDir, GraphTile.FileSuffix(@base));
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            byte[] blob = File.ReadAllBytes(path);
+            return new TileModel(@base, blob);
+        }
+
+        public TileModel? GetTile(GraphId tileId)
+        {
+            GraphId @base = tileId.TileBase();
+            if (_cache.TryGetValue(@base.Value, out TileModel? cached))
+            {
+                return cached;
+            }
+
+            TileModel? model = CreateMutableTile(@base);
+            _cache[@base.Value] = model;
+            return model;
+        }
+
+        public void Evict(GraphId tileId) =>
+            _cache.Remove(tileId.TileBase().Value);
     }
 
     // ------------------------------------------------------------------

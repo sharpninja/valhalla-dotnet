@@ -61,6 +61,12 @@ public sealed record ManagedRoadGraphResourceMetrics(
     long GraphAndTilePhaseScratchPeakBytes,
     long RestrictionPhaseScratchPeakBytes)
 {
+    public int SelectedDop { get; init; }
+
+    public long PerWorkerMemoryReservationBytes { get; init; }
+
+    public long PerWorkerScratchReservationBytes { get; init; }
+
     public long MemoryHighWaterMarkBytes =>
         Math.Max(
             Math.Max(
@@ -281,6 +287,22 @@ public sealed class ManagedRoadGraphBuilder
             string unrestrictedTileDirectory = Path.Combine(
                 request.WorkingDirectory,
                 "pooled-road-tiles");
+            // Per-worker reservation estimates (slab + shape/edge/tile buffers).
+            const long perWorkerMemoryBytes = 8L * 1024 * 1024;
+            const long perWorkerScratchBytes = 16L * 1024 * 1024;
+            int selectedDop = AdaptiveGenerationParallelism.FitWorkerCount(
+                stageMemoryBudget,
+                stageScratchBudget,
+                perWorkerMemoryBytes,
+                perWorkerScratchBytes,
+                tileBuilderConfig.MaxDegreeOfParallelism);
+            if (selectedDop <= 0)
+            {
+                throw new ValhallaGenerationResourceLimitException(
+                    "The pooled road-graph pipeline cannot fit a single tile worker " +
+                    "within the remaining stage resource budget.");
+            }
+
             stopwatch.Restart();
             BoundedRoadTileWriteReceipt tileReceipt =
                 await BoundedRoadTileWriter.WriteAsync(
@@ -289,7 +311,7 @@ public sealed class ManagedRoadGraphBuilder
                         new BoundedRoadTileWriterOptions(
                             unrestrictedTileDirectory,
                             stageMemoryBudget,
-                            tileBuilderConfig.MaxDegreeOfParallelism)
+                            selectedDop)
                         {
                             TimeZoneDatabasePath = request.TimeZoneDatabasePath,
                         },
@@ -301,6 +323,9 @@ public sealed class ManagedRoadGraphBuilder
             ValhallaGenerationFrontierMetrics frontierMetrics =
                 graph.FrontierMetrics;
 
+            // Restriction consumes writer tiles (checksum-valid). Enhance runs after
+            // restrictions on the published tile tree so Stage G never mutates
+            // restriction-stage source checksums in place.
             stopwatch.Restart();
             PooledRoadRestrictionStageReceipt restrictionReceipt =
                 await PooledRoadRestrictionStage.ApplyAsync(
@@ -319,6 +344,31 @@ public sealed class ManagedRoadGraphBuilder
             stopwatch.Stop();
             TimeSpan restrictionDuration = stopwatch.Elapsed;
             durations["pooled.restrictions"] = restrictionDuration;
+
+            string enhancedStagingDirectory = Path.Combine(
+                request.WorkingDirectory,
+                "pooled-road-tiles-enhanced");
+            stopwatch.Restart();
+            PooledRoadEnhanceStageReceipt enhanceReceipt =
+                await PooledRoadEnhanceStage.ApplyAsync(
+                        request.OutputDirectory,
+                        enhancedStagingDirectory,
+                        new PooledRoadEnhanceStageOptions(
+                            stageMemoryBudget,
+                            selectedDop),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            // Publish enhanced tiles back to the requested output directory.
+            if (Directory.Exists(request.OutputDirectory))
+            {
+                Directory.Delete(request.OutputDirectory, recursive: true);
+            }
+
+            Directory.Move(enhancedStagingDirectory, request.OutputDirectory);
+            stopwatch.Stop();
+            TimeSpan enhanceDuration = stopwatch.Elapsed;
+            durations["pooled.enhance"] = enhanceDuration;
+            _ = enhanceReceipt;
 
             var tileResult = new TileBuilderResult
             {
@@ -373,7 +423,12 @@ public sealed class ManagedRoadGraphBuilder
                 sourceScratchHighWater,
                 semanticPhasePeakScratch,
                 graphAndTilePhaseScratch,
-                restrictionPhaseScratch);
+                restrictionPhaseScratch)
+            {
+                SelectedDop = selectedDop,
+                PerWorkerMemoryReservationBytes = perWorkerMemoryBytes,
+                PerWorkerScratchReservationBytes = perWorkerScratchBytes,
+            };
             return new ManagedRoadGraphBuildResult(
                 tileResult,
                 pbfMetrics,
@@ -381,7 +436,7 @@ public sealed class ManagedRoadGraphBuilder
                 resourceMetrics.ScratchHighWaterMarkBytes,
                 pbfDuration,
                 semanticDuration,
-                edgeDuration + tileDuration + restrictionDuration,
+                edgeDuration + tileDuration + enhanceDuration + restrictionDuration,
                 durations)
             {
                 FrontierMetrics = frontierMetrics,
