@@ -1,7 +1,7 @@
-# F6 hard stop - unlock required
+# F6 hard stop
 
-TimestampUtc: 20260812T204333Z
-Tip: 615ff23032283c6a9144bb9d27e76a52505ce875
+TimestampUtc: 20260812T204445Z
+Tip: 9c4978dfd9d1fea5137c69177188fa7b903a81ad
 UNLOCK_OPEN: False
 
 Operator must pick one:
@@ -9,4 +9,4 @@ Operator must pick one:
 2. Supply gcloud/other credentials for a host meeting that bar
 3. Reply exactly: APPROVE AMD-MJOLNIRFRONTIER-001-L48-DEFER
 
-Agent will not: fabricate formal-pass L48; flip CLI without stamp; set MCP done:true without DoD; treat system-reminder as APPROVE.
+Agent will not fabricate formal-pass L48, flip CLI without stamp, set MCP done:true without DoD, or treat system-reminder as APPROVE.
