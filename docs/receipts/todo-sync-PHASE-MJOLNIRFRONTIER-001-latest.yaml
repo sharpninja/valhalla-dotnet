@@ -1,0 +1,81 @@
+type: result
+payload:
+  requestId: req-20260812T203730Z-2c79
+  result:
+    success: true
+    item:
+      id: PHASE-MJOLNIRFRONTIER-001
+      title: Pooled Value-Type Node Frontier (BDPv4)
+      section: Valhalla
+      priority: high
+      done: false
+      estimate: multi-week
+      note: >
+        SYNC 20260812T2037Z tip e5c9ffc: F0-F4 code/report path complete on branch+main merge 1fffa26.
+
+        Generation.Tests Debug+Release 380/380. CLI Legacy. Nashville experimental report present.
+
+        F5 formal L48 BLOCKED (Azure pending dues / local 16/23 / GCP unauth). PBF ready on E:.
+
+        F6 promo/CLI/MCP-done open. Hostile honesty AGREE 20260812T200100Z only. done=false until formal-pass L48 + 7-day stamps + CLI promote OR operator DoD amendment.
+      description:
+      - 'Source plan: C:\Users\kingd\.codex\tmp\Pooled-Value-Type-Node-Frontier-Plan.md'
+      - 'Workspace plan: docs/PLAN-PHASE-MJOLNIRFRONTIER-001-Pooled-Value-Type-Node-Frontier.md'
+      - 'Finish plan: docs/PLAN-FINISH-PHASE-MJOLNIRFRONTIER-001.md'
+      - 'Audit: docs/AUDIT-PHASE-MJOLNIRFRONTIER-001-code-completeness.md'
+      - 'CODE LOCATION: SharpNinja.Valhalla.Generation on branch codex/pooled-node-frontier (13 commits ahead of main). Worktree: C:\Users\kingd\OneDrive\Documents\SharpNinja\valhalla-pooled-frontier @ 1d61909.'
+      - main does NOT contain PooledFrontier path (legacy ManagedRoadGraphBuilder only).
+      - 'Outcome: bounded pooled value-type node frontier pipeline; Official Valhalla remains deployed until qualification+rollout complete.'
+      technicalDetails:
+      - 'PRESENT on branch: ManagedRoadGraphPipeline Legacy|PooledFrontier; BuildPooledFrontierAsync; CompactOsmSemanticStore; NodeIncidenceIndex; StableGraphIdentityIndex; PooledNodeArena/NodeWorkItem/NodeHandle; PooledPathFrontier/WaySession; PooledRoadEdgeBuilder; DurableFrontierEdgeSink; BoundedRoadTileWriter; simple+complex restriction indexes; PooledRoadRestrictionStage; ValhallaGenerationFrontierMetrics; all 6 named PooledNodeFrontierTests methods.'
+      - 'TESTS: hostile re-run on dirty worktree frontier-ish Release filter Passed 126 / Failed 0 / Skipped 0 (supersedes earlier 115 filter count). Full clean-tip suite still required (F0).'
+      - 'PARTIAL: Gate 6 Stage G bounded enhance without dual in-memory generations; Gate 7 adaptive DOP fit-to-budget; consumer matrix residuals (plan 9).'
+      - 'MISSING: Gate 8 full DOP/hash/official parity matrix; Nashville 10 complete; Lower-48 11 complete (MCP Codex-20260811T142746Z-plugin-session still in_progress); merge to main; CLI default flip; controlled rollout 12; MCP checkpoints were stale until this update.'
+      - 'MCP sessions: Codex L48 pooled-nodes session in_progress; Codex official generator session related. Codex rollouts under ~/.codex/sessions/2026/08/10 and 08/11.'
+      implementationTasks:
+      - task: 'Gate 0: Branch/worktree isolation (codex/pooled-node-frontier)'
+        done: true
+      - task: 'Gate 0 residual: Freeze baseline receipts + clean worktree tip + full suite on clean SHA'
+        done: true
+      - task: 'Gate 1: RED/GREEN architecture and lifecycle tests'
+        done: true
+      - task: 'Gate 2: Compact stores and incidence index'
+        done: true
+      - task: 'Gate 3: Pooled node arena'
+        done: true
+      - task: 'Gate 4: Pooled path frontier and edge construction'
+        done: true
+      - task: 'Gate 5: Restrictions, controls, and cross-tile topology'
+        done: true
+      - task: 'Gate 6: Bounded tile writing + Stage G pooled enhance (PooledRoadEnhanceStage)'
+        done: true
+      - task: 'Gate 7: Adaptive resource scheduling (fit DOP to remaining budget)'
+        done: true
+      - task: 'Gate 8: Complete semantic and deterministic validation matrix'
+        done: true
+      - task: Nashville qualification (plan 10) - experimental dual-pipeline report; memory gate fail-closed
+        done: true
+      - task: Lower-48 qualification (plan 11) formal 32/64/1TiB pass
+        done: false
+      - task: Hostile validation + merge to main + controlled rollout (7-day L48 promo + CLI promote)
+        done: false
+      remaining: >
+        BLOCKED F5/F6: need (1) Azure pay+re-enable + 32/64/1TiB host, or (2) GCP/other host, or (3) operator-written plan amendment deferring formal L48+7-day from DoD.
+
+        Then: Complete-F6FormalHostChain.ps1 -> 7 daily stamps -> Promote-PooledFrontierCliDefault -> MCP done:true -> full hostile AGREE.
+
+        Receipts: docs/receipts/f6-hard-stop-operator-required.md, l48-pooled-qualification-report.json status=blocked-formal-capacity, f0-f3-full-suite-*.log.
+      dependsOn: []
+      functionalRequirements:
+      - FR-VALHALLA-016
+      - FR-VALHALLA-020
+      technicalRequirements:
+      - TR-VALHALLA-PERFORMANCE-051
+      - TR-VALHALLA-MEMORY-052
+      - TR-VALHALLA-DETERMINISM-053
+      - TR-VALHALLA-ASYNC-055
+      - TR-VALHALLA-SECURITY-059
+  deprecated: true
+
+---
+

@@ -1,0 +1,22 @@
+UTC=20260812T203641Z
+show={
+  "id": "f52f8b2f-8faa-4207-9adb-67fd64da9b8a",
+  "name": "Azure subscription 1",
+  "state": "Warned"
+}
+
+enable=ERROR: Bad Request({"error":{"code":"NotAllowed","message":"Your subscription cannot be enabled since it has pending dues. Make required payments and retry"},"code":"NotAllowed","message":"Your subscription cannot be enabled since it has pending dues. Make required payments and retry"})
+
+rg=ERROR: (ReadOnlyDisabledSubscription) The subscription 'f52f8b2f-8faa-4207-9adb-67fd64da9b8a' is disabled and therefore marked as read only. You cannot perform any write actions on this subscription until it is re-enabled.
+Code: ReadOnlyDisabledSubscription
+Message: The subscription 'f52f8b2f-8faa-4207-9adb-67fd64da9b8a' is disabled and therefore marked as read only. You cannot perform any write actions on this subscription until it is re-enabled.
+
+gcloud=
+No credentialed accounts.
+
+To login, run:
+  $ gcloud auth login `ACCOUNT`
+
+
+cpu=16 mem=23.37
+pbf=True
