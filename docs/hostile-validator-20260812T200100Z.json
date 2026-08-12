@@ -1,0 +1,60 @@
+{
+  "TimestampUtc": "2026-08-12T20:01:00Z",
+  "ValidatorIdentity": "GrokSubagentHostile",
+  "Workspace": "F:\\GitHub\\TruckMate",
+  "WorktreeUnderReview": "F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier",
+  "Scope": "honest-blocker-set-not-full-DoD",
+  "Claims": [
+    {
+      "Summary": "Worktree tip f7f4b46+ and f6-operator-blocker Azure/local/PBF/MCP content",
+      "Evidence": "HEAD f7f4b468397d18efc71850cd78202b7ea712aae6 on codex/pooled-node-frontier; blocker has ReadOnlyDisabled, 16/23 bar fail, PBF READY, done remains false",
+      "Verdict": "PASS",
+      "Id": "C1"
+    },
+    {
+      "Summary": "l48 report blocked-formal-capacity vCpu=16 pbfPath success:false",
+      "Evidence": "verdict.status=blocked-formal-capacity; machine.vCpu=16; pbfPath=E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf; runs success all false",
+      "Verdict": "PASS",
+      "Id": "C2"
+    },
+    {
+      "Summary": "Live PBF size 12077262565 SHA256 A195FD94...",
+      "Evidence": "Get-Item Length=12077262565; Get-FileHash SHA256=A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3",
+      "Verdict": "PASS",
+      "Id": "C3"
+    },
+    {
+      "Summary": "Azure ReadOnlyDisabled write fail; local fails 32/64/1024 bar",
+      "Evidence": "az group create ReadOnlyDisabledSubscription EXIT=1; host 16 vCPU / 23.37 GiB",
+      "Verdict": "PASS",
+      "Id": "C4"
+    },
+    {
+      "Summary": "PromotionGateTests Release Failed=0",
+      "Evidence": "dotnet test filter FullyQualifiedName~PromotionGate: Failed 0 Passed 4 EXIT=0; log docs/receipts/hostile-promotion-gate-20260812T195800Z.log",
+      "Verdict": "PASS",
+      "Id": "C5"
+    },
+    {
+      "Summary": "CLI road-pipeline default Legacy",
+      "Evidence": "ValhallaGenerationCli.cs AddDefault road-pipeline ManagedRoadGraphPipeline.Legacy",
+      "Verdict": "PASS",
+      "Id": "C6"
+    },
+    {
+      "Summary": "MCP TODO PHASE-MJOLNIRFRONTIER-001 done:false",
+      "Evidence": "GET /mcpserver/todo/PHASE-MJOLNIRFRONTIER-001 done=false after health nonce trust",
+      "Verdict": "PASS",
+      "Id": "C7"
+    },
+    {
+      "Summary": "No full PLAN-FINISH/DoD claim; unblock paths listed",
+      "Evidence": "f6-operator-blocker.md done remains false; Operator paths to unblock full DoD section present",
+      "Verdict": "PASS",
+      "Id": "C8"
+    }
+  ],
+  "ExplicitFailList": [],
+  "OverallVerdict": "AGREE",
+  "Notes": "AGREE is limited to honest-blocker claims only; does not certify full DoD."
+}
