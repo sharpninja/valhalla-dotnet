@@ -1,7 +1,3 @@
-UTC=20260812T200300Z
-worktree=4ede06ffc78f73bfdbe0760482a11101ec556b9f
-origin_main=1fffa261cf95c7630fd1c034c2f7e4b28b3b82bb
-pr1_in_main=yes
-cli_default=AddDefault(options, "road-pipeline", ManagedRoadGraphPipeline.Legacy.ToString());
-cli_file=src/SharpNinja.Valhalla.Generation.Tool/ValhallaGenerationCli.cs:838-839
-pooled_on_main=yes (PooledNodeArena.cs and related present on origin/main)
+839:ManagedRoadGraphPipeline.Legacy.ToString());
+PR1_in_origin_main=yes 1fffa26
+worktree_tip=2f062dfb7516a7ce2bb5dc5eda02e7e4130fbe90
