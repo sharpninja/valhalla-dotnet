@@ -1,0 +1,29 @@
+UTC=2026-08-12T18:23:35Z
+HOST=PAYTON-LEGION2
+LOCAL_VCPU=16
+LOCAL_MEM_GIB=23.4
+LOCAL_MEETS_L48_BAR=False
+DISK_C_FREE_GB=473.75
+DISK_D_FREE_GB=0.04
+DISK_E_FREE_GB=1278.03
+DISK_F_FREE_GB=38.51
+DISK_Temp_FREE_GB=473.75
+PING_PAYTON-DESKTOP=True
+REMOTE_PAYTON-DESKTOP_ERROR=Connecting to remote server PAYTON-DESKTOP failed with the following error message : WinRM cannot process the request. The following error with errorcode 0x8009030e occurred while using Negotiate authentication: A specified logon session does not exist. It may already have been terminated.  
+ Possible causes are:
+  -The user name or password specified are invalid.
+  -Kerberos is used when no authentication method and no user name are specified.
+  -Kerberos accepts domain user names, but not local user names.
+  -The Service Principal Name (SPN) for the remote computer name and port does not exist.
+  -The client and remote computers are in different domains and there is no trust between the two domains.
+ After checking for the above issues, try the following:
+  -Check the Event Viewer for events related to authentication.
+  -Change the authentication method; add the destination computer to the WinRM TrustedHosts configuration setting or use HTTPS transport.
+ Note that computers in the TrustedHosts list might not be authenticated.
+   -For more information about WinRM configuration, run the following command: winrm help config. For more information, see the about_Remote_Troubleshooting Help topic.
+PING_PAYTON-LEGION2=True
+PING_192.168.1.77=True
+VALPATH_EXISTS_C:\Program Files\valhalla=False
+VALPATH_EXISTS_C:\valhalla=False
+VALPATH_EXISTS_F:\valhalla=True
+VALPATH_EXISTS_E:\valhalla=False
