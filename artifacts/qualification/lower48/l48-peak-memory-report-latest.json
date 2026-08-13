@@ -1,0 +1,59 @@
+{
+  "campaign": "Lower48PeakMemory",
+  "pipeline": "PooledFrontier",
+  "purpose": "GCP cost projection inputs: full us-lower48 pooled peak memory",
+  "branchSha": "fd55017995c40ec0df3f2f4767b3d82b438c925b",
+  "pbfPath": "E:\\valhalla-qual\\pbf\\us-lower48.osm.pbf",
+  "pbfSha256": "A195FD9408BDD1599DD0BE81ED6DD521F5029557B409DFE6D22FBA983A73B2C3",
+  "pbfSizeBytes": 12077262565,
+  "machine": {
+    "hostName": "PAYTON-LEGION2",
+    "vCpu": 16,
+    "memoryGiB": 23.37,
+    "freeDiskGiBAtStart": 896
+  },
+  "config": {
+    "maxDopRequested": 4,
+    "memoryBudgetGiB": 16,
+    "scratchBudgetGiB": 10000,
+    "heartbeatSeconds": 10,
+    "intermediateStorage": "MemoryMapped",
+    "gridDivisions": 8,
+    "hierarchy": false,
+    "shortcuts": false
+  },
+  "runs": [
+    {
+      "index": 0,
+      "role": "measured",
+      "pipeline": "PooledFrontier",
+      "durationSeconds": 23975.545,
+      "peakIntermediateMemoryBytes": 0,
+      "peakWorkingSetBytes": 15353397248,
+      "peakPrivateBytes": 10383212544,
+      "peakGcHeapBytes": 9908713704,
+      "resourceMetricsHighWaterMarkBytes": 0,
+      "scratchHighWaterMarkBytes": 0,
+      "selectedDop": 0,
+      "tileCount": 0,
+      "outputTreeSha256": "NONE",
+      "success": false,
+      "failure": "SharpNinja.Valhalla.Generation.ValhallaGenerationResourceLimitException: Intermediate scratch budget of 715827882 bytes would be exceeded.\r\n   at SharpNinja.Valhalla.Generation.Storage.IntermediateSequenceStore`1.AppendToSegment(T value) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Storage\\IntermediateSequenceStore.cs:line 333\r\n   at SharpNinja.Valhalla.Generation.Roads.Frontier.ComplexRestrictionMarkerIndex.EmitWayEndpoints(PooledRoadEdgeBuildResult graph, IIntermediateSequenceStore`1 destination, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\Frontier\\ComplexRestrictionMarkerIndex.cs:line 249\r\n   at SharpNinja.Valhalla.Generation.Roads.Frontier.ComplexRestrictionMarkerIndex.BuildAsync(CompactOsmSemanticStore semanticStore, PooledRoadEdgeBuildResult graph, ComplexRestrictionMarkerIndexOptions options, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\Frontier\\ComplexRestrictionMarkerIndex.cs:line 140\r\n   at SharpNinja.Valhalla.Generation.Roads.Frontier.BoundedRoadTileWriter.WriteAsync(CompactOsmSemanticStore semanticStore, PooledRoadEdgeBuildResult graph, BoundedRoadTileWriterOptions options, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\Frontier\\BoundedRoadTileWriter.cs:line 91\r\n   at SharpNinja.Valhalla.Generation.Roads.Frontier.BoundedRoadTileWriter.ResolveWriteOutcome(BoundedRoadTileWriteReceipt receipt, Exception operationFailure, Exception cleanupFailure) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\Frontier\\BoundedRoadTileWriter.cs:line 208\r\n   at SharpNinja.Valhalla.Generation.Roads.Frontier.BoundedRoadTileWriter.WriteAsync(CompactOsmSemanticStore semanticStore, PooledRoadEdgeBuildResult graph, BoundedRoadTileWriterOptions options, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\Frontier\\BoundedRoadTileWriter.cs:line 192\r\n   at SharpNinja.Valhalla.Generation.Roads.ManagedRoadGraphBuilder.BuildPooledFrontierAsync(ManagedRoadGraphBuildRequest request, TileBuilderConfig tileBuilderConfig, String intermediateDirectory, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\ManagedRoadGraphBuilder.cs:line 314\r\n   at SharpNinja.Valhalla.Generation.Roads.ManagedRoadGraphBuilder.BuildAsync(ManagedRoadGraphBuildRequest request, CancellationToken cancellationToken) in F:\\GitHub\\valhalla-dotnet\\.worktrees\\pooled-node-frontier\\src\\SharpNinja.Valhalla.Generation\\Roads\\ManagedRoadGraphBuilder.cs:line 126\r\n   at Program.<Main>$(String[] args) in E:\\valhalla-qual\\lower48-peak\\runner-20260812T231118Z\\Program.cs:line 205",
+      "resourceMetrics": null,
+      "processExit": 2
+    }
+  ],
+  "peaks": {
+    "maxPeakWorkingSetBytes": 15353397248,
+    "maxPeakWorkingSetGiB": 14.299,
+    "maxPeakIntermediateMemoryBytes": 0,
+    "maxPeakIntermediateMemoryGiB": 0.0
+  },
+  "verdict": {
+    "status": "lab-capacity-measurement-failed",
+    "formalBarMet": false,
+    "formalPass": false,
+    "notes": "Lab peak-memory measurement for GCP sizing. HEARTBEAT lines in log are progress-only and do not alter peak capture."
+  },
+  "generatedUtc": "2026-08-13T05:51:02.7658814Z"
+}
